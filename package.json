@@ -1,0 +1,22 @@
+{
+  "name": "atris-share",
+  "version": "0.1.0-preview.0",
+  "private": true,
+  "description": "Local-first, AI-assisted social publishing and video creation workspace — foundation preview.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0 <27",
+    "npm": ">=10"
+  },
+  "workspaces": ["apps/*", "packages/*", "services/*"],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json",
+    "preview": "npm run build && node dist/apps/preview-cli/src/index.js",
+    "check": "npm run typecheck && npm run preview"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}

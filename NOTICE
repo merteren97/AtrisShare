@@ -1,0 +1,10 @@
+AtrisShare
+Copyright 2026 AtrisShare contributors
+
+Licensed under the Apache License, Version 2.0.
+
+Atris ecosystem: https://atrishub.com
+
+This foundation template does not bundle AtrisAgent source, AI CLI tools,
+FFmpeg binaries or social platform SDKs. Preserve applicable attribution and
+license notices when adapting or bundling third-party components in later phases.

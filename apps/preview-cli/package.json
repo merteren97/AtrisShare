@@ -1,0 +1,7 @@
+{
+  "name": "@atris-share/preview-cli",
+  "version": "0.1.0-preview.0",
+  "private": true,
+  "license": "Apache-2.0",
+  "type": "module"
+}
