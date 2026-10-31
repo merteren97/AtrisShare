@@ -1,7 +1,9 @@
 # Platform integration plan
 
-**No connector is implemented.** Validate current official documentation when
-implementation starts; platform access products and restrictions can change.
+**YouTube connection is implemented; live acceptance is pending.** Desktop OAuth,
+channel/subject verification, vault storage, refresh and disconnect/revoke have
+controlled-provider tests. [Setup and current limits](YOUTUBE.md). YouTube publishing
+and all other connectors remain planned; access products/restrictions can change.
 
 | Platform | Planned operations | Integration discovery required |
 | --- | --- | --- |

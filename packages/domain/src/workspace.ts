@@ -35,8 +35,9 @@ export interface WorkspaceAccount {
   displayName: string;
   platform: z.infer<typeof platformSchema>;
   destinationId: string;
-  status: "demo";
+  status: "demo" | "connected" | "reauth-required" | "disconnected";
   createdAt: string;
+  connection?: { providerSubjectId: string; grantedScopes: string[]; verifiedAt: string };
 }
 export interface WorkspaceProject {
   id: string;

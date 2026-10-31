@@ -1,5 +1,6 @@
 /** Publishing/media contracts remain planned; local workspace types live in workspace.ts. */
 export * from "./workspace.js";
+export * from "./youtube.js";
 export const SOCIAL_PLATFORMS = ["youtube", "x", "tiktok", "linkedin"] as const;
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 export type IsoTimestamp = string;

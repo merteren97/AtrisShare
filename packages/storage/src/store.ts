@@ -9,12 +9,16 @@ import type {
 import { contextSchema, createAccountSchema, createMemorySchema, createProjectSchema, idSchema, updateMemorySchema } from "../../domain/src/workspace.js";
 import { redactSensitiveText, WorkspaceError } from "./config.js";
 import { migrate } from "./migrations.js";
+import type { YouTubeConnection } from "../../domain/src/youtube.js";
+import { channelIdSchema } from "../../domain/src/youtube.js";
 
 type Row = Record<string, string | number | null>;
 const now = () => new Date().toISOString();
 const accountFrom = (r: Row): WorkspaceAccount => ({
   id: String(r.id), displayName: String(r.display_name), platform: r.platform as WorkspaceAccount["platform"],
-  destinationId: String(r.destination_id), status: "demo", createdAt: String(r.created_at)
+  destinationId: String(r.destination_id), status: r.status as WorkspaceAccount["status"], createdAt: String(r.created_at),
+  ...(r.provider_subject_id ? { connection: { providerSubjectId: String(r.provider_subject_id),
+    grantedScopes: JSON.parse(String(r.granted_scopes)) as string[], verifiedAt: String(r.verified_at) } } : {})
 });
 const projectFrom = (r: Row): WorkspaceProject => ({
   id: String(r.id), accountId: String(r.account_id), name: String(r.name), description: String(r.description), createdAt: String(r.created_at)
@@ -43,7 +47,63 @@ export class WorkspaceStore {
       .run(randomUUID(), scope.accountId, scope.projectId, action, entityId, now());
   }
   listAccounts(): WorkspaceAccount[] {
-    return (this.db.prepare("SELECT * FROM accounts ORDER BY created_at, id").all() as Row[]).map(accountFrom);
+    return (this.db.prepare(`SELECT a.*, c.provider_subject_id, c.granted_scopes, c.verified_at FROM accounts a
+      LEFT JOIN youtube_connections c ON c.account_id=a.id ORDER BY a.created_at, a.id`).all() as Row[]).map(accountFrom);
+  }
+  getYouTubeConnection(accountId: string, destinationId: string): YouTubeConnection {
+    idSchema.parse(accountId); channelIdSchema.parse(destinationId);
+    const row = this.db.prepare(`SELECT c.* FROM youtube_connections c JOIN accounts a ON a.id=c.account_id
+      WHERE c.account_id=? AND c.destination_id=? AND a.destination_id=c.destination_id AND a.platform='youtube'`).get(accountId, destinationId) as Row | undefined;
+    if (!row) throw new WorkspaceError(404, "youtube_account_not_found");
+    return { accountId, destinationId, providerSubjectId: String(row.provider_subject_id), credentialRef: row.credential_ref as string | null,
+      grantedScopes: JSON.parse(String(row.granted_scopes)) as string[], verifiedAt: String(row.verified_at), revision: Number(row.revision) };
+  }
+  /** Only a server-verified identity may reach this internal repository method. */
+  connectYouTube(input: { accountId: string; destinationId: string; displayName: string; providerSubjectId: string;
+    credentialRef: string; grantedScopes: string[]; expectedRevision: number | null }): YouTubeConnection {
+    idSchema.parse(input.accountId); channelIdSchema.parse(input.destinationId);
+    return this.transaction(() => {
+      const existing = this.db.prepare("SELECT * FROM youtube_connections WHERE destination_id=?").get(input.destinationId) as Row | undefined;
+      if (input.expectedRevision === null) {
+        if (existing || this.db.prepare("SELECT id FROM accounts WHERE id=?").get(input.accountId)) throw new WorkspaceError(409, "youtube_already_connected");
+        this.db.prepare("INSERT INTO accounts VALUES(?,?,'youtube',?,'connected',?)")
+          .run(input.accountId, redactSensitiveText(input.displayName).slice(0, 100), input.destinationId, now());
+        this.db.prepare("INSERT INTO youtube_connections VALUES(?,?,?,?,?,?,1)").run(input.accountId, input.providerSubjectId,
+          input.destinationId, input.credentialRef, JSON.stringify(input.grantedScopes), now());
+      } else {
+        const previous = this.getYouTubeConnection(input.accountId, input.destinationId);
+        if (previous.revision !== input.expectedRevision) throw new WorkspaceError(409, "connection_conflict");
+        if (previous.providerSubjectId !== input.providerSubjectId) throw new WorkspaceError(409, "youtube_identity_mismatch");
+        this.db.prepare("UPDATE youtube_connections SET credential_ref=?,granted_scopes=?,verified_at=?,revision=revision+1 WHERE account_id=?")
+          .run(input.credentialRef, JSON.stringify(input.grantedScopes), now(), input.accountId);
+        this.db.prepare("UPDATE accounts SET status='connected',display_name=? WHERE id=?")
+          .run(redactSensitiveText(input.displayName).slice(0, 100), input.accountId);
+      }
+      this.audit({ accountId: input.accountId, projectId: null }, "youtube.connected", input.accountId);
+      if (!this.getContext()) this.saveContext({ accountId: input.accountId, projectId: null });
+      return this.getYouTubeConnection(input.accountId, input.destinationId);
+    });
+  }
+  setYouTubeStatus(connection: YouTubeConnection, status: "reauth-required" | "disconnected"): void {
+    this.transaction(() => {
+      const current = this.getYouTubeConnection(connection.accountId, connection.destinationId);
+      if (current.revision !== connection.revision) throw new WorkspaceError(409, "connection_conflict");
+      this.db.prepare("UPDATE accounts SET status=? WHERE id=?").run(status, connection.accountId);
+      this.db.prepare(`UPDATE youtube_connections SET revision=revision+1${status === "disconnected" ? ",credential_ref=NULL" : ""} WHERE account_id=?`).run(connection.accountId);
+      this.audit({ accountId: connection.accountId, projectId: null }, `youtube.${status}`, connection.accountId);
+    });
+  }
+  recordYouTubeRevocation(providerSubjectId: string): void {
+    this.transaction(() => {
+      const rows = this.db.prepare(`SELECT c.account_id FROM youtube_connections c JOIN accounts a ON a.id=c.account_id
+        WHERE c.provider_subject_id=? AND a.status<>'disconnected'`).all(providerSubjectId) as Row[];
+      for (const row of rows) {
+        const accountId = String(row.account_id);
+        this.db.prepare("UPDATE accounts SET status='reauth-required' WHERE id=?").run(accountId);
+        this.db.prepare("UPDATE youtube_connections SET revision=revision+1 WHERE account_id=?").run(accountId);
+        this.audit({ accountId, projectId: null }, "youtube.grant-revoked", accountId);
+      }
+    });
   }
   createAccount(value: CreateAccountInput): WorkspaceAccount {
     const input = createAccountSchema.parse(value);

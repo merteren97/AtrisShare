@@ -1,4 +1,4 @@
-# Local workspace — Phase 1
+# Local workspace — Phase 1 and YouTube connection slice
 
 ## What works
 
@@ -12,6 +12,8 @@
 - Search/category/state filters, current-scope audit, loading/error/retry states,
   Turkish/English UI and persistent dark/light appearance preferences.
 - SQLite migration/repository layer and an internal Windows DPAPI credential port.
+- YouTube OAuth/PKCE, channel/subject checks, vault storage, refresh and disconnect;
+  see [setup and live-acceptance limitations](YOUTUBE.md).
 
 ## Development commands
 
@@ -24,7 +26,7 @@ when upgrading Node.
 ```bash
 npm run dev             # Vite + authenticated local API, 127.0.0.1:1438
 npm run tauri:dev       # Native shell; Rust owns the API, Vite serves UI only
-npm run check           # Type checks, 11 storage/API tests, frontend/core build
+npm run check           # Type checks, storage/API/OAuth tests, frontend/core build
 npm run test:runtime    # Stage and exercise the isolated packaged Node/API
 npm run preview         # Feature manifest only
 ```
@@ -72,12 +74,13 @@ initialization with `BEGIN IMMEDIATE`. Selection, projects, notes and audit surv
 closing and restarting the process.
 
 Windows vault records use DPAPI **CurrentUser** encryption and atomic encrypted
-file replacement under `vault/`. Credential references are account UUIDs, hashed
+file replacement under `vault/`. Credential references are random UUID generations, hashed
 for filenames. Secrets cross the PowerShell helper through stdin, not argv, and
 are never written as plaintext. Startup probes protect/unprotect before reporting
 the vault available. A missing/failed/unsupported vault returns unavailable and
 does not fall back to SQLite or browser storage. macOS/Linux vault backends are
-not implemented. The current demo workflow never writes a social credential.
+not implemented. Demo workflows never write social credentials. YouTube account
+credentials use the vault, while SQLite holds only references and safe metadata.
 
 Workspace memory and SQLite themselves are **not encrypted by DPAPI**; only vault
 records are. The application data directory is private local user data and should
@@ -100,7 +103,8 @@ Bundled debug and release apps resolve packaged resources, not checkout files.
 All API operations require `Authorization: Bearer <session key>`. Host and origin
 checks are additional boundaries; neither replaces authentication. API errors are
 bounded codes, never raw request bodies, SQL errors or tokens. JSON inputs are
-strictly validated and body sizes are limited. Only CORS preflight is unauthenticated.
+strictly validated and body sizes are limited. CORS preflight and the single-use
+YouTube OAuth callback/static result page are unauthenticated; see [the boundary](YOUTUBE.md#local-api).
 
 Closing the native window requests authenticated shutdown, waits, then kills/reaps
 the owned child if necessary. Stdin EOF and a parent-PID watchdog also terminate

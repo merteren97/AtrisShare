@@ -25,10 +25,14 @@ oturum doğrulamalı yerel API, SQLite projeler, kalıcı hesap/proje seçimi ve
 hafıza yönetimi uygulanmıştır. Açıkça demo etiketli hedefler ve projeler oluşturabilir,
 kaynak bilgisi ile öneri/onaylı durumları tutulan notlar ekleyebilir, düzenleyebilir
 ve silebilirsin. Koyu/açık tema ve Türkçe/İngilizce arayüz vardır. Windows DPAPI
-tabanlı dahili kimlik kasası arayüzü hazırdır; demo hedefler sosyal token tutmaz.
+tabanlı dahili kimlik kasası hazırdır; demo hedefler sosyal token tutmaz.
 
-Gerçek sosyal OAuth bağlantıları, video işleme, AI/MCP, bildirimler, zamanlayıcı
-ve gerçek paylaşım **henüz uygulanmamıştır**. İmzalı kurulum paketi yayınlanmadı.
+**Aşama 2 sürüyor:** YouTube Desktop OAuth/PKCE, beklenen kanal ve Google kimliği
+doğrulaması, kasada saklama, token yenileme ve bağlantı/izin iptali uygulanmıştır.
+Kontrollü sağlayıcı testleri vardır; yetkili gerçek kanal kabulü henüz yapılmadı.
+[YouTube kurulum ve sınırları](docs/YOUTUBE.md). Video işleme, AI/MCP, bildirimler,
+zamanlayıcı, diğer sosyal bağlantılar ve gerçek paylaşım **henüz uygulanmamıştır**.
+İmzalı kurulum paketi yayınlanmadı.
 
 ## Planlanan kullanım akışı
 
@@ -62,7 +66,8 @@ isteyebilir; insan kararını kabul edip yayınlama yapabilen taraf güvenilir u
 
 ## Platform durumu
 
-Dört platformun bağlayıcısı da planlama aşamasındadır. Gerçek özellikler resmi
+YouTube bağlantısı geliştirme aşamasındadır; yayınlama ve diğer bağlayıcılar planlanır.
+Gerçek özellikler resmi
 API’ye, hesap izinlerine, uygulama incelemesine, kotalara ve erişim paketlerine
 bağlıdır. YouTube video listesine erişmek kaynak videoyu indirme yetkisi veya
 API’si sağlamaz. Shorts/kısa video davranışı yalnızca dosya adı veya süreye göre
@@ -78,7 +83,7 @@ npm ci
 npm run check
 ```
 
-`check`; tür kontrollerini, API/veri testlerini ve üretim arayüz/core derlemesini
+`check`; tür kontrollerini, API/veri/OAuth testlerini ve üretim arayüz/core derlemesini
 çalıştırır. Sosyal sağlayıcılara bağlanmaz veya paylaşım yapmaz.
 
 ```bash
@@ -96,6 +101,8 @@ ayrıca native SQLite eklentisi derlemeye gerek yoktur.
 Önce **demo hesap** ekle, bir proje oluştur ve **Hafıza** bölümünü aç. Hesap notları
 için **Hesap geneli**, proje notları için ilgili projeyi seç; bu kapsamlar bilinçli
 olarak ayrı tutulur. Seçim ve notlar yeniden başlatmada korunur.
+Windows'ta gerçek YouTube kanalı bağlamak için Desktop OAuth istemcini yapılandır
+ve **Hesaplar** bölümünü kullan; [bağlantı rehberini](docs/YOUTUBE.md) izle.
 
 Veriler Windows'ta `%LOCALAPPDATA%\AtrisShare`, macOS'ta `~/Library/Application
 Support/AtrisShare`, Linux'ta `$XDG_DATA_HOME/AtrisShare` veya
@@ -127,12 +134,13 @@ docs/                Herkese açık mimari, yol haritası ve platform notları
 ```
 
 Masaüstü, domain, veri katmanı, yerel API ve preview CLI uygulanmıştır. AI köprüsü,
-sosyal bağlayıcılar, medya motoru, MCP ve kalıcı işçiler planlama aşamasındadır.
+yayınlama bağlayıcıları, medya motoru, MCP ve kalıcı işçiler planlama aşamasındadır.
+İlk YouTube kimlik doğrulama adaptörü yerel API içindedir.
 
 ## Yol haritası ve katkı
 
-Sonraki hedef, gerçek OAuth/kanal doğrulamasıyla YouTube için uçtan uca, onaylı
-ilk paylaşım akışıdır. Manuel editör, AI/MCP, otomatik klip çıkarma, zamanlayıcı
+Sonraki hedef, canlı kanal kabulü, yerel medya ve yayın onaylarıyla YouTube için
+uçtan uca ilk paylaşım akışıdır. Manuel editör, AI/MCP, otomatik klip çıkarma, zamanlayıcı
 ve diğer platformlar aşamalı olarak eklenir.
 
 - [Yol haritası](docs/ROADMAP.md)

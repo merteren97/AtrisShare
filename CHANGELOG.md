@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — YouTube connection slice
+
+- Desktop OAuth with PKCE S256, one-use state, expected channel and Google subject verification.
+- Encrypted account credentials, refresh/re-verification, local disconnect and optional Google grant revocation.
+- Transactional v1 migration preserving projects/memory, copy-on-write credential generations and stale-writer fencing.
+- TR/EN Accounts connection states, pending-session recovery, identity/scope inspection and disconnect confirmation.
+- Controlled-provider regression coverage and setup documentation. Live authorized-channel acceptance is pending;
+  local-media import, publication approval, upload/processing and receipts are not implemented yet.
+
 ## 0.1.0-preview.1 — Local workspace
 
 - React/Vite/Tauri desktop with demo target and project selection/creation.

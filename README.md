@@ -24,9 +24,13 @@ local API, SQLite projects, persistent account/project selection and scoped memo
 are implemented. Create clearly labeled demo targets, organize projects and
 create/edit/delete notes with provenance and suggested/confirmed states. Dark/light
 themes and Turkish/English UI are available. Windows DPAPI provides an internal
-credential-vault port; demo targets do not store social credentials.
+credential vault; demo targets do not store social credentials.
 
-Social OAuth connections, video processing, AI/MCP, notifications, scheduling and
+**Phase 2 in progress:** YouTube Desktop OAuth/PKCE, expected-channel and Google
+subject verification, vault storage, refresh and disconnect/revoke are implemented.
+They have controlled-provider test coverage; live authorized-channel acceptance is
+still pending. See [YouTube setup and boundaries](docs/YOUTUBE.md).
+Video processing, AI/MCP, notifications, scheduling, other social connections and
 live publishing are **not implemented yet**. No signed installer is released.
 
 ## Planned workflow
@@ -60,7 +64,8 @@ approval; only the trusted application can accept a human decision and publish.
 
 ## Platform status
 
-All four connectors are planned. Actual features depend on the official API,
+YouTube connection is in progress; publishing and the other connectors are planned.
+Actual features depend on the official API,
 account permissions, app review, quotas and available access tiers. A YouTube
 catalog does not by itself provide permission or an API to download source footage.
 Shorts/short-video behavior will be validated per platform, not assumed from a
@@ -76,7 +81,7 @@ npm ci
 npm run check
 ```
 
-`check` runs type checks, API/storage tests and a production frontend/core build.
+`check` runs type checks, API/storage/OAuth tests and a production frontend/core build.
 It does not contact social providers or publish content.
 
 ```bash
@@ -94,6 +99,8 @@ experimental upstream; no separately compiled SQLite addon is needed.
 Start by adding a **demo account**, creating a project, then opening **Memory**.
 Select **Account-wide** for account notes or a specific project for project notes;
 these scopes are intentionally separate. Selection and notes survive restarts.
+To connect a real YouTube channel on Windows, configure your Desktop OAuth client
+and use **Accounts**; follow [the connection guide](docs/YOUTUBE.md).
 
 Data defaults to `%LOCALAPPDATA%\AtrisShare` on Windows, `~/Library/Application
 Support/AtrisShare` on macOS and `$XDG_DATA_HOME/AtrisShare` (or
@@ -125,12 +132,13 @@ docs/                Public architecture, roadmap and platform notes
 ```
 
 Desktop, domain, storage, local API and preview CLI are implemented. AI bridge,
-connectors, media engine, MCP and durable workers remain planned boundaries.
+publishing connectors, media engine, MCP and durable workers remain planned boundaries.
+The initial YouTube authentication adapter lives inside the local API.
 
 ## Roadmap and contributions
 
 The next milestone is one end-to-end, approval-gated YouTube flow with real
-OAuth/channel verification. Manual editing, AI/MCP, automatic clipping, scheduling
+channel acceptance, local-media import and publication approvals. Manual editing, AI/MCP, automatic clipping, scheduling
 and additional platforms follow in phases.
 
 - [Roadmap](docs/ROADMAP.md)

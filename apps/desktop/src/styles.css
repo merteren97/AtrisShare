@@ -153,6 +153,27 @@ main { flex: 1; overflow: auto; padding: 34px 34px 42px; scrollbar-gutter: stabl
 .destination code { font-size: 10px; color: var(--muted); overflow-wrap: anywhere; line-height: 1.8; }
 .account-card > p.account-disclaimer { color: var(--faint); font-size: 11px; line-height: 1.8; margin: 16px 0; }
 .account-card > .button { width: 100%; }
+.youtube-connect { padding: 23px; margin-bottom: 24px; }
+.youtube-connect-heading { display: flex; gap: 12px; align-items: flex-start; }
+.youtube-connect-heading > div { flex: 1; min-width: 0; }
+.youtube-connect-heading p { color: var(--muted); line-height: 1.8; font-size: 12px; margin-top: 7px; }
+.youtube-connect-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 12px; margin-top: 22px; }
+.youtube-connect-form .form-field { flex: 1 1 260px; margin-bottom: 0; }
+.youtube-connect-form .field-help { flex-basis: 100%; margin-top: 0; }
+.youtube-setup-note { display: flex; gap: 12px; background: var(--warning-soft); color: var(--warning); padding: 15px; border-radius: 7px; margin-top: 20px; font-size: 12px; }
+.youtube-setup-note p { line-height: 1.8; margin-top: 7px; overflow-wrap: anywhere; }
+.youtube-session { display: flex; gap: 12px; padding: 16px; margin-top: 20px; border: 1px solid var(--line); border-radius: 8px; color: var(--muted); font-size: 12px; }
+.youtube-session > div { min-width: 0; }
+.youtube-session p { font-size: 11px; line-height: 1.8; margin-top: 7px; overflow-wrap: anywhere; }
+.youtube-session-actions { display: flex; gap: 12px; flex-shrink: 0; margin-left: auto; align-items: flex-start; }
+.connection-details { color: var(--faint); font-size: 10px; line-height: 1.8; margin-bottom: 18px; overflow-wrap: anywhere; }
+.connection-details summary { cursor: pointer; margin-bottom: 8px; }
+.connection-details code, .connection-details time { display: block; }
+.connection-details ul { padding-left: 15px; }
+.account-connection-actions { display: flex; flex-wrap: wrap; gap: 6px 16px; margin-top: 12px; }
+.revoke-option { display: flex; align-items: flex-start; gap: 10px; font-size: 12px; line-height: 1.8; }
+.revoke-option input { margin-top: 4px; }
+.revoke-option small { display: block; color: var(--muted); line-height: 1.8; margin-top: 6px; }
 .version { font-size: 11px; color: var(--faint); white-space: nowrap; }
 .settings-panel { margin-bottom: 20px; padding: 22px 25px; }
 .settings-section-title { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; color: var(--muted); }
@@ -249,6 +270,11 @@ main { flex: 1; overflow: auto; padding: 34px 34px 42px; scrollbar-gutter: stabl
   .statusbar { padding: 6px 13px; font-size: 9px; }
   .statusbar > span:last-child { display: none; }
   .dialog-content { padding: 25px 22px; }
+  .youtube-connect { padding: 18px; }
+  .youtube-connect-heading > .badge { display: none; }
+  .youtube-session { flex-wrap: wrap; }
+  .youtube-session > div:not(.youtube-session-actions) { flex: 1; }
+  .youtube-session-actions { flex-basis: 100%; margin-left: 29px; }
   .form-columns { gap: 10px; }
   .list-caption { line-height: 1.7; }
 }

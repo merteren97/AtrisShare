@@ -1,14 +1,16 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
-import { ZodError } from "zod";
+import { z, ZodError } from "zod";
 import {
   APP_VERSION, contextSchema, createAccountSchema, createMemorySchema, createProjectSchema,
   deleteMemorySchema, idSchema, updateMemorySchema, type VaultStatus, type WorkspaceContext
 } from "../../../packages/domain/src/workspace.js";
 import { resolveDataDirectory, WorkspaceError } from "../../../packages/storage/src/config.js";
 import { WorkspaceStore } from "../../../packages/storage/src/store.js";
-import { createCredentialVault } from "../../../packages/storage/src/vault.js";
+import { createCredentialVault, type CredentialVault } from "../../../packages/storage/src/vault.js";
+import { startYouTubeSchema, youtubeAccountSchema } from "../../../packages/domain/src/youtube.js";
+import { YouTubeService, type YouTubeOptions } from "./youtube.js";
 
 export interface ApiOptions {
   dataDirectory?: string;
@@ -17,6 +19,9 @@ export interface ApiOptions {
   allowedOrigins?: string[];
   /** Only used by tests that intentionally exercise unavailable vault behavior. */
   vaultStatus?: VaultStatus;
+  /** Internal integration-test dependencies, not HTTP/runtime configuration. */
+  credentialVault?: CredentialVault;
+  youtube?: YouTubeOptions;
 }
 export const NATIVE_ORIGINS = ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
 const MAX_BODY = 32 * 1024;
@@ -51,8 +56,13 @@ export async function startApi(options: ApiOptions = {}) {
   if (token.length < 32) throw new Error("Runtime token is too short");
   const expected = createHash("sha256").update(`Bearer ${token}`).digest();
   const allowedOrigins = new Set(options.allowedOrigins ?? NATIVE_ORIGINS);
-  const vault = options.vaultStatus ?? (await createCredentialVault(directory)).status;
+  const credentialVault: CredentialVault = options.credentialVault ?? (options.vaultStatus ? {
+    status: options.vaultStatus,
+    async get() { throw new Error("Vault unavailable"); }, async set() { throw new Error("Vault unavailable"); }, async delete() { throw new Error("Vault unavailable"); }
+  } : await createCredentialVault(directory));
+  const vault = credentialVault.status;
   const store = new WorkspaceStore(join(directory, "atris-share.sqlite"));
+  const youtube = new YouTubeService(store, credentialVault, options.youtube);
   let origin = "";
   let closePromise: Promise<void> | undefined;
   const send = (response: ServerResponse, status: number, payload: unknown) => {
@@ -62,7 +72,9 @@ export async function startApi(options: ApiOptions = {}) {
   const server = createServer((request, response) => {
     response.setHeader("Cache-Control", "no-store");
     response.setHeader("X-Content-Type-Options", "nosniff");
+    response.setHeader("Referrer-Policy", "no-referrer");
     const handle = async () => {
+      if (closePromise) throw new WorkspaceError(503, "runtime_closing");
       if (request.headers.host !== new URL(origin).host) throw new WorkspaceError(403, "host_forbidden");
       const requestOrigin = request.headers.origin;
       if (requestOrigin && !allowedOrigins.has(requestOrigin)) throw new WorkspaceError(403, "origin_forbidden");
@@ -76,6 +88,16 @@ export async function startApi(options: ApiOptions = {}) {
         response.writeHead(204); response.end(); return;
       }
       const url = new URL(request.url ?? "/", origin);
+      // The sole unauthenticated callback uses one-use PKCE/state, not the runtime
+      // bearer token. No arbitrary redirect, token response or caller text is rendered.
+      if (request.method === "GET" && url.pathname === "/oauth/youtube/callback") {
+        await youtube.callback(url.searchParams, origin);
+        response.writeHead(303, { Location: "/oauth/youtube/result" }); response.end(); return;
+      }
+      if (request.method === "GET" && url.pathname === "/oauth/youtube/result") {
+        response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" });
+        response.end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AtrisShare — YouTube</title><h1>AtrisShare</h1><p>Return to AtrisShare to see the connection result. You may close this tab.</p><p lang="tr">Bağlantı sonucunu görmek için AtrisShare’e dönün. Bu sekmeyi kapatabilirsiniz.</p></html>'); return;
+      }
       if ([...url.searchParams.keys()].some(key => /token|secret|authorization/i.test(key))) throw new WorkspaceError(400, "credentials_in_url");
       const received = createHash("sha256").update(request.headers.authorization ?? "").digest();
       if (!timingSafeEqual(received, expected)) throw new WorkspaceError(401, "unauthorized");
@@ -86,6 +108,20 @@ export async function startApi(options: ApiOptions = {}) {
           vault, dataDirectory: directory, version: APP_VERSION });
       } else if (route === "POST /api/accounts") {
         send(response, 201, store.createAccount(createAccountSchema.parse(await body(request))));
+      } else if (route === "GET /api/youtube") {
+        send(response, 200, youtube.setup());
+      } else if (route === "POST /api/youtube/sessions") {
+        send(response, 201, await youtube.start(startYouTubeSchema.parse(await body(request)), origin));
+      } else if (request.method === "GET" && /^\/api\/youtube\/sessions\/[^/]+$/.test(url.pathname)) {
+        send(response, 200, youtube.status(idSchema.parse(url.pathname.split("/").at(-1))));
+      } else if (request.method === "POST" && /^\/api\/youtube\/sessions\/[^/]+\/(cancel|open)$/.test(url.pathname)) {
+        const id = idSchema.parse(url.pathname.split("/").at(-2));
+        send(response, 200, url.pathname.endsWith("/cancel") ? youtube.cancel(id) : await youtube.reopen(id));
+      } else if (route === "POST /api/youtube/verify") {
+        send(response, 200, await youtube.verify(youtubeAccountSchema.parse(await body(request))));
+      } else if (route === "POST /api/youtube/disconnect") {
+        const input = youtubeAccountSchema.extend({ revoke: z.boolean() }).strict().parse(await body(request));
+        send(response, 200, await youtube.disconnect({ accountId: input.accountId, destinationId: input.destinationId }, input.revoke));
       } else if (route === "PUT /api/context") {
         send(response, 200, store.setContext(contextSchema.parse(await body(request))));
       } else if (route === "GET /api/projects") {
@@ -119,10 +155,10 @@ export async function startApi(options: ApiOptions = {}) {
   server.requestTimeout = 10_000;
   server.headersTimeout = 10_000;
   function close(): Promise<void> {
-    closePromise ??= new Promise<void>((resolve, reject) => {
+    closePromise ??= youtube.close().then(() => new Promise<void>((resolve, reject) => {
       server.close(error => { store.close(); if (error) reject(error); else resolve(); });
       server.closeIdleConnections();
-    });
+    }));
     return closePromise;
   }
   try {

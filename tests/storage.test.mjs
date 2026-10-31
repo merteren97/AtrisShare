@@ -99,6 +99,39 @@ test("database rejects future schema and foreign-key violations independently of
   assert.throws(() => new WorkspaceStore(path), /newer/);
 });
 
+test("Phase 1 schema upgrade preserves every dependent row and keeps foreign keys enforced", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "atris-share-v1-upgrade-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "workspace.sqlite");
+  const old = new DatabaseSync(path);
+  old.exec(await readFile(new URL("./fixtures/workspace-v1.sql", import.meta.url), "utf8"));
+  const accountId = randomUUID(), projectId = randomUUID(), memoryId = randomUUID(), sourceId = randomUUID(), auditId = randomUUID();
+  const stamp = "2026-11-01T00:00:00.000Z";
+  old.prepare("INSERT INTO accounts VALUES(?,?,?,?,?,?)").run(accountId, "My demo", "youtube", `demo:youtube:${accountId}`, "demo", stamp);
+  old.prepare("INSERT INTO projects VALUES(?,?,?,?,?)").run(projectId, accountId, "Existing project", "Keep this", stamp);
+  old.prepare("INSERT INTO memory VALUES(?,?,?,?,?,?,?,?,?,?)").run(memoryId, accountId, projectId, "decision", "Existing note", "confirmed", 3, sourceId, stamp, stamp);
+  old.prepare("INSERT INTO context VALUES(1,?,?)").run(accountId, projectId);
+  old.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?)").run(auditId, accountId, projectId, "memory.created", memoryId, "local-user", stamp);
+  old.close();
+  const store = new WorkspaceStore(path);
+  try {
+    assert.equal(store.listAccounts()[0].status, "demo");
+    assert.deepEqual(store.getContext(), { accountId, projectId });
+    assert.equal(store.listProjects(accountId)[0].description, "Keep this");
+    assert.equal(store.listMemory({ accountId, projectId })[0].revision, 3);
+    assert.equal(store.listMemory({ accountId, projectId })[0].provenance.sourceId, sourceId);
+    assert.equal(store.listAudit({ accountId, projectId })[0].id, auditId);
+    const other = createAccount(store, "Other");
+    assert.throws(() => store.setContext({ accountId: other.id, projectId }), /context_not_found/);
+    const inspection = new DatabaseSync(path);
+    try {
+      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 2);
+      assert.deepEqual(inspection.prepare("PRAGMA foreign_key_check").all(), []);
+      assert.ok(inspection.prepare("PRAGMA foreign_key_list(memory)").all().every(row => row.table !== "accounts_next"));
+    } finally { inspection.close(); }
+  } finally { store.close(); }
+});
+
 test("concurrent first launches serialize migrations and preserve both writers", async t => {
   const directory = await mkdtemp(join(tmpdir(), "atris-share-concurrent-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

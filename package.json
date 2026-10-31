@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit && npm run typecheck -w @atris-share/desktop",
     "build:core": "tsc -p tsconfig.build.json",
     "build": "npm run build:core && npm run build -w @atris-share/desktop",
-    "test": "npm run build:core && node --test tests/storage.test.mjs tests/api.test.mjs",
+    "test": "npm run build:core && node --test tests/storage.test.mjs tests/api.test.mjs tests/youtube.test.mjs",
     "test:runtime": "npm run stage:runtime && node --test tests/runtime.test.mjs",
     "preview": "npm run build:core && node dist/apps/preview-cli/src/index.js",
     "check": "npm run typecheck && npm test && npm run build",

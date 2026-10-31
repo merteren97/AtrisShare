@@ -1,13 +1,14 @@
 # Preview roadmap
 
 This is a milestone plan, not a release-date commitment. Phases 0–1 are implemented.
-Subsequent phases require their own implementation and checks.
+Phase 2 connection/authentication is implemented with controlled-provider checks;
+live channel acceptance and the remaining publication pipeline are pending.
 
 | Phase | Milestone | Completion evidence |
 | --- | --- | --- |
 | 0 | Foundation preview | Standalone workspace, EN/TR README, Apache-2.0, ignore rules, contracts, working build/manifest |
 | 1 — implemented | Local desktop and state | React/Tauri shell, authenticated loopback API, SQLite migrations, scoped memory CRUD/audit and Windows DPAPI port; Windows native acceptance |
-| 2 | First supervised YouTube flow | Connect account, read/verify channel, import local media, explicit approval, publish and record receipt on an authorized test channel |
+| 2 — in progress | First supervised YouTube flow | OAuth/PKCE, verified identity/channel, refresh and disconnect implemented; live connection, local media, explicit approval, publish and receipt acceptance pending |
 | 3 | Manual video editor | Non-destructive timeline, preview/proxies, trim/crop/captions/audio, cancel/retry render and undo |
 | 4 | AI runtime bridge and MCP | First real CLI adapter, model discovery, scoped tools, AI side panel, previewable edit proposals, external MCP interoperability |
 | 5 | AI clip discovery | Timestamped analysis, ranked/explained candidates, configurable short clips, reframing/captions and final review |

@@ -1,9 +1,11 @@
 # Architecture — local workspace and planned publishing
 
 Phase 1 implements the React/Tauri desktop, authenticated loopback API, SQLite
-accounts/projects/context/memory/audit and a Windows DPAPI vault port. AI, MCP,
-media processing, queues, approval and social connectors in the diagram remain
-target boundaries. See [local workspace details](LOCAL-WORKSPACE.md).
+accounts/projects/context/memory/audit and a Windows DPAPI vault port. The first
+Phase 2 slice adds YouTube OAuth/PKCE, subject/channel verification, refresh and
+disconnect/revoke with controlled-provider tests; live acceptance is pending.
+AI, MCP, media processing, queues, approval and publishing remain target boundaries.
+See [local workspace details](LOCAL-WORKSPACE.md) and [YouTube](YOUTUBE.md).
 
 ## Local-first application
 
@@ -43,7 +45,7 @@ integration needs a separate product decision.
   destination. Re-verify before an external side effect. Revoked permissions or
   a changed destination block the job and request reconnection/review.
 - A single OAuth identity may control several destinations; model them explicitly.
-- Store future social credentials in the OS vault; SQLite must hold references,
+- Store social credentials in the OS vault; SQLite must hold references,
   not token values. Current demo accounts have no social credentials. The DPAPI
   port is internal and not exposed through HTTP or frontend IPC. Unsupported or
   unavailable vaults fail closed; there is no plaintext fallback.

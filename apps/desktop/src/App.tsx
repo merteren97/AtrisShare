@@ -6,6 +6,7 @@ import type { WorkspaceAccount, WorkspaceContext, WorkspaceMemory, WorkspaceProj
 import { ApiError, request } from "./api";
 import { dictionaries, kindKeys, type Language, type TextKey } from "./i18n";
 import { useWorkspace } from "./use-workspace";
+import { Accounts, accountStatusKey, PlatformIcon } from "./Accounts";
 
 type Page = "workspace" | "memory" | "accounts" | "settings";
 type Modal = { type: "account" | "project" } | { type: "memory" | "delete"; entry: WorkspaceMemory | null };
@@ -18,9 +19,6 @@ function preference(key: string, fallback: string): string {
 }
 function remember(key: string, value: string): void {
   try { localStorage.setItem(key, value); } catch { /* Preferences remain available in memory. */ }
-}
-function PlatformIcon({ platform }: { platform: WorkspaceAccount["platform"] }) {
-  return <span className={`platform-icon ${platform}`} aria-hidden="true">{platform === "youtube" ? "▶" : platform === "linkedin" ? "in" : platform === "tiktok" ? "♪" : "𝕏"}</span>;
 }
 function Empty({ icon, title, description, action }: { icon: ReactNode; title: string; description: string; action?: ReactNode }) {
   return <div className="empty-state"><span className="empty-icon">{icon}</span><h2>{title}</h2><p>{description}</p>{action}</div>;
@@ -65,6 +63,15 @@ export function App() {
       if (error.code === "invalid_input") return t("invalidInput");
       if (["context_not_found", "memory_not_found", "context_required"].includes(error.code)) return t("missingContext");
       if (["unauthorized", "connection_failed", "invalid_runtime"].includes(error.code)) return t("connectionError");
+      const youtubeErrors: Record<string, TextKey> = {
+        youtube_not_configured: "youtubeSetupHelp", vault_unavailable: "youtubeVaultRequired", youtube_missing_scope: "youtubeMissingScope",
+        youtube_channel_mismatch: "youtubeChannelMismatch", youtube_identity_mismatch: "youtubeIdentityMismatch", youtube_reauth_required: "youtubeReauthHelp",
+        youtube_consent_denied: "youtubeConsentDenied", youtube_session_expired: "youtubeExpired", youtube_refresh_missing: "youtubeRefreshMissing",
+        youtube_access_denied: "youtubeAccessDenied", youtube_revoke_failed: "youtubeRevokeFailed", youtube_already_connected: "youtubeAlreadyConnected",
+        youtube_session_active: "youtubeSessionActive", connection_conflict: "youtubeConnectionConflict", youtube_session_not_found: "youtubeExpired"
+      };
+      if (youtubeErrors[error.code]) return t(youtubeErrors[error.code]!);
+      if (error.code.startsWith("youtube_")) return t("youtubeOperationFailed");
       return t("operationFailed");
     }
     return t("connectionError");
@@ -147,7 +154,7 @@ export function App() {
       <div className="context-bar" aria-label={t("scopeDescription")}>
         <label><span>{t("account")}</span><div className="context-select">{account && <PlatformIcon platform={account.platform} />}<select aria-label={t("account")} value={context?.accountId ?? ""} disabled={!state?.accounts.length || ws.loading}
           onChange={event => { void ws.chooseContext({ accountId: event.target.value, projectId: null }); }}>
-          {!state?.accounts.length && <option value="">{t("noAccount")}</option>}{state?.accounts.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select>{account && <span className="badge demo-badge">{t("demo")}</span>}</div></label>
+          {!state?.accounts.length && <option value="">{t("noAccount")}</option>}{state?.accounts.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select>{account && <span className={`badge ${account.status === "connected" ? "positive" : "demo-badge"}`}>{t(accountStatusKey(account))}</span>}</div></label>
         <span className="context-divider" />
         <label className="project-select"><span>{t("project")}</span><select aria-label={t("project")} value={context?.projectId ?? ""} disabled={!context || ws.loading}
           onChange={event => { if (context) void ws.chooseContext({ accountId: context.accountId, projectId: event.target.value || null }); }}>
@@ -161,7 +168,7 @@ export function App() {
           {page === "workspace" && <>
             <div className="page-heading"><div><p className="eyebrow">{t("workspace")}</p><h1>{t("homeTitle")}</h1><p>{t("homeDescription")}</p></div>{account ? addProject : addAccount}</div>
             {!account ? <div className="panel welcome"><Empty icon={<FolderKanban size={30} />} title={t("welcomeTitle")} description={t("welcomeDescription")} action={addAccount} /></div> : <>
-              <div className="target-strip"><PlatformIcon platform={account.platform} /><div><strong>{account.displayName}</strong><p>{t("demoNotice")}</p></div><span className="badge demo-badge">{platformNames[account.platform]} · {t("demo")}</span></div>
+              <div className="target-strip"><PlatformIcon platform={account.platform} /><div><strong>{account.displayName}</strong><p>{t(account.status === "demo" ? "demoNotice" : account.status === "connected" ? "youtubeAccountNotice" : "youtubeDisconnectedNotice")}</p></div><span className={`badge ${account.status === "connected" ? "positive" : "demo-badge"}`}>{platformNames[account.platform]} · {t(accountStatusKey(account))}</span></div>
               <section className="section"><div className="section-heading"><div><h2>{t("projects")} <span className="count">{state.projects.length}</span></h2><p>{t("projectsDescription")}</p></div></div>
                 {state.projects.length ? <div className="project-grid">{state.projects.map(item => <button className={`project-card ${project?.id === item.id ? "selected-project" : ""}`} key={item.id} disabled={ws.loading}
                   onClick={() => { void ws.chooseContext({ accountId: item.accountId, projectId: item.id }); }}><span className="project-symbol"><FolderKanban size={20} /></span>
@@ -184,15 +191,8 @@ export function App() {
               : <div className="panel"><Empty icon={<BrainCircuit size={27} />} title={ws.memory.length ? t("noResults") : t("memoryEmpty")} description={t("memoryEmptyDescription")} action={context ? addMemory : addAccount} /></div>}
           </>}
 
-          {page === "accounts" && <>
-            <div className="page-heading"><div><p className="eyebrow">{t("accounts")}</p><h1>{t("accountTitle")}</h1><p>{t("accountDescription")}</p></div>{addAccount}</div>
-            <div className="account-grid">{state.accounts.map(item => <article className={`account-card ${item.id === account?.id ? "selected-account" : ""}`} key={item.id}>
-              <div className="account-card-top"><PlatformIcon platform={item.platform} /><span className="badge demo-badge">{t("demo")}</span></div><h2>{item.displayName}</h2><p>{platformNames[item.platform]}</p>
-              <div className="destination"><span>{t("target")}</span><code>{item.destinationId}</code></div><p className="account-disclaimer">{t("demoNotice")}</p>
-              <button className={`button ${item.id === account?.id ? "subtle" : "secondary"}`} disabled={item.id === account?.id || ws.loading} onClick={() => { void ws.chooseContext({ accountId: item.id, projectId: null }); }}>{item.id === account?.id && <Check size={15} />}{item.id === account?.id ? t("selected") : t("selectAccount")}</button>
-            </article>)}</div>
-            {!state.accounts.length && <div className="panel"><Empty icon={<UsersRound size={28} />} title={t("welcomeTitle")} description={t("welcomeDescription")} action={addAccount} /></div>}
-          </>}
+          {page === "accounts" && <Accounts accounts={state.accounts} selectedId={account?.id} vaultAvailable={state.vault.available} loading={ws.loading}
+            t={t} errorText={errorText} refresh={ws.refresh} choose={accountId => { void ws.chooseContext({ accountId, projectId: null }); }} addDemo={addAccount} />}
 
           {page === "settings" && <>
             <div className="page-heading"><div><p className="eyebrow">{t("settings")}</p><h1>{t("settingsTitle")}</h1><p>{t("settingsDescription")}</p></div><span className="version">v{state.version}</span></div>
