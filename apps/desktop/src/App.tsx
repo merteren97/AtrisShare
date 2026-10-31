@@ -1,0 +1,236 @@
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
+import { ArrowUpRight, BrainCircuit, Check, ChevronRight, CircleAlert, Database, FolderKanban, HardDrive,
+  LoaderCircle, NotebookPen, Plus, RefreshCw, Search, Settings2, Share2, ShieldCheck, UsersRound, X } from "lucide-react";
+import type { WorkspaceAccount, WorkspaceContext, WorkspaceMemory, WorkspaceProject } from "../../../packages/domain/src/workspace.js";
+import { ApiError, request } from "./api";
+import { dictionaries, kindKeys, type Language, type TextKey } from "./i18n";
+import { useWorkspace } from "./use-workspace";
+
+type Page = "workspace" | "memory" | "accounts" | "settings";
+type Modal = { type: "account" | "project" } | { type: "memory" | "delete"; entry: WorkspaceMemory | null };
+const platformNames = { youtube: "YouTube", x: "X", tiktok: "TikTok", linkedin: "LinkedIn" };
+const nav = [{ id: "workspace", icon: FolderKanban }, { id: "memory", icon: BrainCircuit },
+  { id: "accounts", icon: UsersRound }, { id: "settings", icon: Settings2 }] as const;
+
+function preference(key: string, fallback: string): string {
+  try { return localStorage.getItem(key) ?? fallback; } catch { return fallback; }
+}
+function remember(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* Preferences remain available in memory. */ }
+}
+function PlatformIcon({ platform }: { platform: WorkspaceAccount["platform"] }) {
+  return <span className={`platform-icon ${platform}`} aria-hidden="true">{platform === "youtube" ? "▶" : platform === "linkedin" ? "in" : platform === "tiktok" ? "♪" : "𝕏"}</span>;
+}
+function Empty({ icon, title, description, action }: { icon: ReactNode; title: string; description: string; action?: ReactNode }) {
+  return <div className="empty-state"><span className="empty-icon">{icon}</span><h2>{title}</h2><p>{description}</p>{action}</div>;
+}
+function MemoryCard({ entry, t, date, onEdit, onDelete }: {
+  entry: WorkspaceMemory; t: (key: TextKey) => string; date: (value: string) => string;
+  onEdit: (entry: WorkspaceMemory) => void; onDelete: (entry: WorkspaceMemory) => void;
+}) {
+  return <article className="memory-card">
+    <div className="memory-card-top"><span className="category-label">{t(kindKeys[entry.kind])}</span>
+      <span className={`badge ${entry.reviewState === "confirmed" ? "positive" : "suggested"}`}>{entry.reviewState === "confirmed" && <Check size={11} />}{t(entry.reviewState)}</span></div>
+    <p className="note-content">{entry.text}</p>
+    <div className="memory-meta"><span>{t("manual")} · {date(entry.updatedAt)}</span><span>{t("revision")} {entry.revision}</span></div>
+    <details className="provenance"><summary>{t("source")}</summary><span>{entry.provenance.sourceId}</span><time dateTime={entry.provenance.recordedAt}>{date(entry.provenance.recordedAt)}</time></details>
+    <div className="card-actions"><button className="text-button" onClick={() => onEdit(entry)}>{t("edit")}</button>
+      <button className="text-button danger-text" onClick={() => onDelete(entry)}>{t("delete")}</button></div>
+  </article>;
+}
+
+export function App() {
+  const [language, setLanguage] = useState<Language>(() => preference("atris-share-language", "tr") === "en" ? "en" : "tr");
+  const [theme, setTheme] = useState(() => preference("atris-share-theme", "dark") === "light" ? "light" : "dark");
+  const [page, setPage] = useState<Page>("workspace");
+  const [modal, setModal] = useState<Modal | null>(null);
+  const [pending, setPending] = useState(false);
+  const [formError, setFormError] = useState<unknown>(null);
+  const [notice, setNotice] = useState<TextKey | null>(null);
+  const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("");
+  const [review, setReview] = useState("");
+  const returnFocus = useRef<HTMLElement | null>(null);
+  const ws = useWorkspace();
+  const t = (key: TextKey) => dictionaries[language][key];
+  const state = ws.snapshot;
+  const context = state?.context ?? null;
+  const account = state?.accounts.find(item => item.id === context?.accountId);
+  const project = state?.projects.find(item => item.id === context?.projectId);
+  const date = (value: string) => new Intl.DateTimeFormat(language === "tr" ? "tr-TR" : "en-GB", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
+  const errorText = (error: unknown) => {
+    if (error instanceof ApiError) {
+      if (error.code === "revision_conflict") return t("revisionConflict");
+      if (error.code === "invalid_input") return t("invalidInput");
+      if (["context_not_found", "memory_not_found", "context_required"].includes(error.code)) return t("missingContext");
+      if (["unauthorized", "connection_failed", "invalid_runtime"].includes(error.code)) return t("connectionError");
+      return t("operationFailed");
+    }
+    return t("connectionError");
+  };
+  useEffect(() => { document.documentElement.dataset.theme = theme; remember("atris-share-theme", theme); }, [theme]);
+  useEffect(() => { document.documentElement.lang = language; remember("atris-share-language", language); }, [language]);
+  useEffect(() => {
+    setModal(null); setSearch(""); setCategory(""); setReview("");
+  }, [context?.accountId, context?.projectId]);
+  useEffect(() => {
+    if (!notice) return;
+    const timeout = setTimeout(() => setNotice(null), 4500);
+    return () => clearTimeout(timeout);
+  }, [notice]);
+  function open(value: Modal) { returnFocus.current = document.activeElement as HTMLElement | null; setFormError(null); setModal(value); }
+  async function mutate(action: () => Promise<void>, message: TextKey) {
+    if (pending) return;
+    setPending(true); setFormError(null);
+    try { await action(); setModal(null); setNotice(message); await ws.refresh(); }
+    catch (error) { setFormError(error); }
+    finally { setPending(false); }
+  }
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const text = (key: string) => String(data.get(key) ?? "");
+    if (modal?.type === "account") {
+      void mutate(async () => {
+        const created = await request<WorkspaceAccount>("/api/accounts", "POST", { displayName: text("displayName"), platform: text("platform") });
+        await request("/api/context", "PUT", { accountId: created.id, projectId: null });
+      }, "accountCreated");
+    } else if (modal?.type === "project" && context) {
+      const scope = context;
+      void mutate(async () => {
+        const created = await request<WorkspaceProject>("/api/projects", "POST", { accountId: scope.accountId, name: text("name"), description: text("description") });
+        await request("/api/context", "PUT", { accountId: scope.accountId, projectId: created.id });
+        setPage("workspace");
+      }, "projectCreated");
+    } else if (modal?.type === "memory" && context) {
+      const entry = modal.entry;
+      const scope = context;
+      void mutate(async () => {
+        const input = { context: scope, text: text("text"), kind: text("kind"), reviewState: text("reviewState") };
+        await request(entry ? `/api/memory/${entry.id}` : "/api/memory", entry ? "PATCH" : "POST",
+          entry ? { ...input, expectedRevision: entry.revision } : input);
+      }, "noteSaved");
+    } else if (modal?.type === "delete" && context && modal.entry) {
+      const entry = modal.entry;
+      const scope = context;
+      void mutate(async () => {
+        await request(`/api/memory/${entry.id}`, "DELETE", { context: scope, expectedRevision: entry.revision });
+      }, "noteDeleted");
+    }
+  }
+  const addMemory = <button className="button primary" disabled={!context || ws.loading} onClick={() => open({ type: "memory", entry: null })}><Plus size={16} />{t("newMemory")}</button>;
+  const addProject = <button className="button primary" disabled={!context || ws.loading} onClick={() => open({ type: "project" })}><Plus size={16} />{t("newProject")}</button>;
+  const addAccount = <button className="button primary" disabled={ws.loading || !state} onClick={() => open({ type: "account" })}><Plus size={16} />{t("addAccount")}</button>;
+  const visibleMemory = ws.memory.filter(entry => (!category || entry.kind === category) && (!review || entry.reviewState === review) &&
+    entry.text.toLocaleLowerCase(language).includes(search.toLocaleLowerCase(language)));
+  function scopeLabel(scope: WorkspaceContext) { return state?.projects.find(p => p.id === scope.projectId)?.name ?? t("accountScope"); }
+  const memoryCard = (entry: WorkspaceMemory) => <MemoryCard key={entry.id} entry={entry} t={t} date={date}
+    onEdit={value => open({ type: "memory", entry: value })} onDelete={value => open({ type: "delete", entry: value })} />;
+  const modalTitle = modal?.type === "account" ? t("addAccount") : modal?.type === "project" ? t("newProject") : modal?.type === "delete" ? t("deleteTitle") : modal?.type === "memory" && modal.entry ? t("edit") : t("newMemory");
+
+  return <div className="app-shell">
+    <aside className="sidebar" aria-label="AtrisShare">
+      <a className="brand" href="#" onClick={event => { event.preventDefault(); setPage("workspace"); }}><span className="brand-mark"><Share2 size={21} strokeWidth={2.4} /></span><span>Atris<span className="brand-light">Share</span><small>PREVIEW</small></span></a>
+      <div className="sidebar-label">{t("local")}</div>
+      <nav aria-label={t("workspace")}>{nav.map(item => <button key={item.id} className={`nav-item ${page === item.id ? "active" : ""}`} aria-current={page === item.id ? "page" : undefined}
+        title={t(item.id)} onClick={() => setPage(item.id)}><item.icon size={18} /><span>{t(item.id)}</span>{item.id === "memory" && <small>{ws.memory.length}</small>}</button>)}</nav>
+      <div className="sidebar-bottom"><span className="phase-dot" /><div><strong>{t("phase")}</strong><p>{t("futureDescription")}</p></div></div>
+      <a className="hub-link" href="https://atrishub.com" target="_blank" rel="noreferrer">AtrisHub <ArrowUpRight size={14} /></a>
+    </aside>
+
+    <div className="main-shell">
+      <header className="topbar"><div className="breadcrumb">AtrisShare <ChevronRight size={14} /><strong>{t(page)}</strong></div>
+        <div className="topbar-right"><span className={`connection ${ws.error ? "offline" : ""}`}><span />{ws.error ? t("retry") : t("preview")}</span>
+          <button className="icon-button" aria-label={t("retry")} title={t("retry")} disabled={ws.loading} onClick={() => { void ws.refresh(true); }}><RefreshCw size={16} className={ws.loading ? "spinning" : ""} /></button></div></header>
+
+      <div className="context-bar" aria-label={t("scopeDescription")}>
+        <label><span>{t("account")}</span><div className="context-select">{account && <PlatformIcon platform={account.platform} />}<select aria-label={t("account")} value={context?.accountId ?? ""} disabled={!state?.accounts.length || ws.loading}
+          onChange={event => { void ws.chooseContext({ accountId: event.target.value, projectId: null }); }}>
+          {!state?.accounts.length && <option value="">{t("noAccount")}</option>}{state?.accounts.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select>{account && <span className="badge demo-badge">{t("demo")}</span>}</div></label>
+        <span className="context-divider" />
+        <label className="project-select"><span>{t("project")}</span><select aria-label={t("project")} value={context?.projectId ?? ""} disabled={!context || ws.loading}
+          onChange={event => { if (context) void ws.chooseContext({ accountId: context.accountId, projectId: event.target.value || null }); }}>
+          <option value="">{t("accountScope")}</option>{state?.projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        <div className="context-saved"><Database size={13} /><span>SQLite</span></div>
+      </div>
+
+      <main id="main-content" aria-busy={ws.loading}>
+        {!!ws.error && <div className="error-banner" role="alert"><CircleAlert size={17} /><span>{errorText(ws.error)}</span><button className="text-button" onClick={() => { void ws.refresh(true); }}>{t("retry")}</button></div>}
+        {ws.loading && !state ? <div className="loading-state" role="status"><LoaderCircle className="spinning" />{t("loading")}</div> : state && <>
+          {page === "workspace" && <>
+            <div className="page-heading"><div><p className="eyebrow">{t("workspace")}</p><h1>{t("homeTitle")}</h1><p>{t("homeDescription")}</p></div>{account ? addProject : addAccount}</div>
+            {!account ? <div className="panel welcome"><Empty icon={<FolderKanban size={30} />} title={t("welcomeTitle")} description={t("welcomeDescription")} action={addAccount} /></div> : <>
+              <div className="target-strip"><PlatformIcon platform={account.platform} /><div><strong>{account.displayName}</strong><p>{t("demoNotice")}</p></div><span className="badge demo-badge">{platformNames[account.platform]} · {t("demo")}</span></div>
+              <section className="section"><div className="section-heading"><div><h2>{t("projects")} <span className="count">{state.projects.length}</span></h2><p>{t("projectsDescription")}</p></div></div>
+                {state.projects.length ? <div className="project-grid">{state.projects.map(item => <button className={`project-card ${project?.id === item.id ? "selected-project" : ""}`} key={item.id} disabled={ws.loading}
+                  onClick={() => { void ws.chooseContext({ accountId: item.accountId, projectId: item.id }); }}><span className="project-symbol"><FolderKanban size={20} /></span>
+                  <span className="project-card-copy"><strong>{item.name}</strong><span>{item.description || platformNames[account.platform]}</span></span><span className="project-card-bottom">{project?.id === item.id ? t("selected") : t("open")}<ChevronRight size={14} /></span></button>)}</div>
+                  : <div className="panel"><Empty icon={<FolderKanban size={24} />} title={t("noProjects")} description={t("noProjectsDescription")} action={addProject} /></div>}
+              </section>
+              <section className="section"><div className="section-heading"><div><h2>{t("recentMemory")}</h2><p>{scopeLabel(context!)}</p></div><button className="text-button" onClick={() => setPage("memory")}>{t("viewAll")}<ArrowUpRight size={14} /></button></div>
+                {ws.memory.length ? <div className="memory-grid">{ws.memory.slice(0, 3).map(memoryCard)}</div> : <div className="inline-empty"><BrainCircuit size={20} /><span>{t("memoryEmpty")}</span><button className="text-button" onClick={() => open({ type: "memory", entry: null })}>{t("newMemory")}<Plus size={14} /></button></div>}
+              </section>
+            </>}
+          </>}
+
+          {page === "memory" && <>
+            <div className="page-heading"><div><p className="eyebrow">{t("memory")}</p><h1>{t("memoryTitle")}</h1><p>{t("memoryDescription")}</p></div>{addMemory}</div>
+            <div className="memory-toolbar"><label className="search-field"><Search size={16} /><input aria-label={t("searchLabel")} placeholder={t("search")} value={search} onChange={event => setSearch(event.target.value)} /></label>
+              <select aria-label={t("category")} value={category} onChange={event => setCategory(event.target.value)}><option value="">{t("allKinds")}</option>{Object.entries(kindKeys).map(([value, key]) => <option key={value} value={value}>{t(key)}</option>)}</select>
+              <select aria-label={t("state")} value={review} onChange={event => setReview(event.target.value)}><option value="">{t("allStates")}</option><option value="confirmed">{t("confirmed")}</option><option value="suggested">{t("suggested")}</option></select></div>
+            <div className="list-caption"><span>{context ? `${account?.displayName} / ${scopeLabel(context)}` : t("noAccount")}</span><span>{visibleMemory.length} {t("records")}</span></div>
+            {ws.loading ? <div className="loading-state" role="status"><LoaderCircle className="spinning" />{t("loading")}</div> : visibleMemory.length ? <div className="memory-grid">{visibleMemory.map(memoryCard)}</div>
+              : <div className="panel"><Empty icon={<BrainCircuit size={27} />} title={ws.memory.length ? t("noResults") : t("memoryEmpty")} description={t("memoryEmptyDescription")} action={context ? addMemory : addAccount} /></div>}
+          </>}
+
+          {page === "accounts" && <>
+            <div className="page-heading"><div><p className="eyebrow">{t("accounts")}</p><h1>{t("accountTitle")}</h1><p>{t("accountDescription")}</p></div>{addAccount}</div>
+            <div className="account-grid">{state.accounts.map(item => <article className={`account-card ${item.id === account?.id ? "selected-account" : ""}`} key={item.id}>
+              <div className="account-card-top"><PlatformIcon platform={item.platform} /><span className="badge demo-badge">{t("demo")}</span></div><h2>{item.displayName}</h2><p>{platformNames[item.platform]}</p>
+              <div className="destination"><span>{t("target")}</span><code>{item.destinationId}</code></div><p className="account-disclaimer">{t("demoNotice")}</p>
+              <button className={`button ${item.id === account?.id ? "subtle" : "secondary"}`} disabled={item.id === account?.id || ws.loading} onClick={() => { void ws.chooseContext({ accountId: item.id, projectId: null }); }}>{item.id === account?.id && <Check size={15} />}{item.id === account?.id ? t("selected") : t("selectAccount")}</button>
+            </article>)}</div>
+            {!state.accounts.length && <div className="panel"><Empty icon={<UsersRound size={28} />} title={t("welcomeTitle")} description={t("welcomeDescription")} action={addAccount} /></div>}
+          </>}
+
+          {page === "settings" && <>
+            <div className="page-heading"><div><p className="eyebrow">{t("settings")}</p><h1>{t("settingsTitle")}</h1><p>{t("settingsDescription")}</p></div><span className="version">v{state.version}</span></div>
+            <section className="settings-panel panel"><div className="settings-section-title"><Settings2 size={18} /><h2>{t("appearance")}</h2></div>
+              <div className="setting-row"><label htmlFor="theme">{t("theme")}</label><select id="theme" value={theme} onChange={event => setTheme(event.target.value)}><option value="dark">{t("dark")}</option><option value="light">{t("light")}</option></select></div>
+              <div className="setting-row"><label htmlFor="language">{t("language")}</label><select id="language" value={language} onChange={event => setLanguage(event.target.value as Language)}><option value="tr">Türkçe</option><option value="en">English</option></select></div></section>
+            <section className="settings-panel panel"><div className="settings-section-title"><HardDrive size={18} /><h2>{t("storage")}</h2></div>
+              <div className="setting-row data-row"><span>{t("dataDirectory")}</span><code>{state.dataDirectory}</code></div>
+              <div className="setting-row"><span>{t("database")}</span><span>SQLite · WAL</span></div>
+              <div className="setting-row"><div><span>{t("vault")}</span><p>{t("vaultDescription")}</p></div><span className="vault-status"><ShieldCheck size={15} />{state.vault.available ? t("vaultReady") : t("vaultUnavailable")}</span></div>
+              <div className="setting-row"><div><span>{t("session")}</span><p>{t("sessionDescription")}</p></div><span className="badge positive">{t("local")}</span></div></section>
+            <section className="settings-panel panel"><div className="settings-section-title"><NotebookPen size={18} /><h2>{t("audit")}</h2></div><p className="section-note">{t("auditDescription")}</p>
+              {ws.audit.length ? <ul className="audit-list">{ws.audit.map(event => <li key={event.id}><span className="audit-dot" /><span>{event.action in dictionaries[language] ? t(event.action as TextKey) : event.action}</span><time dateTime={event.recordedAt}>{date(event.recordedAt)}</time></li>)}</ul> : <p className="section-note">{t("noAudit")}</p>}</section>
+          </>}
+        </>}
+      </main>
+      <footer className="statusbar"><span><span className={`status-dot ${ws.error ? "offline-dot" : ""}`} />{ws.error ? t("connectionError") : ws.loading ? t("loading") : t("connected")}</span><span>{account?.displayName ?? "AtrisShare"}{context && <> / {scopeLabel(context)}</>}</span></footer>
+    </div>
+    <div className="notice-region" role="status" aria-live="polite">{notice && <div className="toast"><Check size={17} />{t(notice)}</div>}</div>
+    <Dialog.Root open={modal !== null} onOpenChange={value => { if (!value && !pending) setModal(null); }}>
+      <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content" aria-describedby="dialog-description" onEscapeKeyDown={event => { if (pending) event.preventDefault(); }} onPointerDownOutside={event => { if (pending) event.preventDefault(); }}
+        onCloseAutoFocus={event => {
+          event.preventDefault();
+          const target = returnFocus.current?.isConnected ? returnFocus.current : document.querySelector<HTMLElement>('.nav-item[aria-current="page"]');
+          target?.focus();
+        }}>
+        <Dialog.Title>{modalTitle}</Dialog.Title><Dialog.Description id="dialog-description">{modal?.type === "account" ? t("accountFormDescription") : modal?.type === "project" ? t("projectFormDescription") : modal?.type === "delete" ? t("deleteDescription") : t("memoryFormDescription")}</Dialog.Description>
+        <Dialog.Close className="icon-button dialog-close" aria-label={t("close")} disabled={pending}><X size={18} /></Dialog.Close>
+        {context && modal?.type !== "account" && <div className="form-scope"><span className="status-dot" />{account?.displayName} / {modal?.type === "project" ? t("accountScope") : scopeLabel(context)}</div>}
+        <form onSubmit={submit} key={`${modal?.type}-${modal && "entry" in modal ? modal.entry?.id ?? "new" : "new"}`}>
+          {modal?.type === "account" && <><label className="form-field">{t("displayName")}<input name="displayName" placeholder={t("accountPlaceholder")} required maxLength={100} autoComplete="off" /></label><label className="form-field">{t("platform")}<select name="platform">{Object.entries(platformNames).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label></>}
+          {modal?.type === "project" && <><label className="form-field">{t("name")}<input name="name" placeholder={t("projectPlaceholder")} required maxLength={100} autoComplete="off" /></label><label className="form-field">{t("description")}<textarea name="description" rows={3} maxLength={500} /></label></>}
+          {modal?.type === "memory" && <><div className="form-columns"><label className="form-field">{t("category")}<select name="kind" defaultValue={modal.entry?.kind ?? "brand-voice"}>{Object.entries(kindKeys).map(([value, key]) => <option key={value} value={value}>{t(key)}</option>)}</select></label><label className="form-field">{t("state")}<select name="reviewState" defaultValue={modal.entry?.reviewState ?? "confirmed"}><option value="confirmed">{t("confirmed")}</option><option value="suggested">{t("suggested")}</option></select></label></div><label className="form-field">{t("noteText")}<textarea name="text" required maxLength={4000} rows={6} defaultValue={modal.entry?.text ?? ""} placeholder={t("notePlaceholder")} /></label><p className="field-help">{t("noteHelp")}</p></>}
+          {modal?.type === "delete" && <blockquote className="delete-preview">{modal.entry?.text}</blockquote>}
+          {!!formError && <p role="alert" className="form-error">{errorText(formError)}</p>}
+          <div className="dialog-actions"><button className="button secondary" type="button" disabled={pending} onClick={() => setModal(null)}>{t("cancel")}</button><button className={`button ${modal?.type === "delete" ? "danger" : "primary"}`} disabled={pending} type="submit">{pending && <LoaderCircle size={15} className="spinning" />}{pending ? t("saving") : modal?.type === "delete" ? t("delete") : modal?.type === "account" ? t("addAccount") : modal?.type === "project" ? t("newProject") : t("save")}</button></div>
+        </form>
+      </Dialog.Content></Dialog.Portal>
+    </Dialog.Root>
+  </div>;
+}

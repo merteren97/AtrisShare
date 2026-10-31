@@ -1,12 +1,12 @@
 # Preview roadmap
 
-This is a milestone plan, not a release-date commitment. Only Phase 0 is present
-in this repository. Subsequent phases require their own implementation and checks.
+This is a milestone plan, not a release-date commitment. Phases 0–1 are implemented.
+Subsequent phases require their own implementation and checks.
 
 | Phase | Milestone | Completion evidence |
 | --- | --- | --- |
 | 0 | Foundation preview | Standalone workspace, EN/TR README, Apache-2.0, ignore rules, contracts, working build/manifest |
-| 1 | Local desktop and state | React/Tauri shell, authenticated loopback API, SQLite migrations, project/account context, vault boundary |
+| 1 — implemented | Local desktop and state | React/Tauri shell, authenticated loopback API, SQLite migrations, scoped memory CRUD/audit and Windows DPAPI port; Windows native acceptance |
 | 2 | First supervised YouTube flow | Connect account, read/verify channel, import local media, explicit approval, publish and record receipt on an authorized test channel |
 | 3 | Manual video editor | Non-destructive timeline, preview/proxies, trim/crop/captions/audio, cancel/retry render and undo |
 | 4 | AI runtime bridge and MCP | First real CLI adapter, model discovery, scoped tools, AI side panel, previewable edit proposals, external MCP interoperability |

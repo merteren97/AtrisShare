@@ -1,0 +1,29 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "AtrisShare",
+  "version": "0.1.0-preview.1",
+  "identifier": "com.atrishub.share",
+  "build": {
+    "beforeDevCommand": "npm run dev:native",
+    "devUrl": "http://127.0.0.1:1438",
+    "beforeBuildCommand": "npm run build && npm run stage:runtime",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{
+      "label": "main", "title": "AtrisShare — Local Preview", "width": 1260, "height": 830,
+      "minWidth": 740, "minHeight": 560, "center": true, "backgroundColor": "#141719"
+    }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; object-src 'none'; frame-src 'none'; base-uri 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "resources": { "runtime/": "runtime/" },
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
+    "shortDescription": "Local social workspace — developer preview",
+    "category": "Productivity"
+  }
+}

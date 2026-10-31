@@ -16,5 +16,5 @@
     "outDir": "dist"
   },
   "include": ["apps/*/src/**/*.ts", "packages/*/src/**/*.ts", "services/*/src/**/*.ts"],
-  "exclude": ["dist", "node_modules", ".atris-local"]
+  "exclude": ["dist", "node_modules", ".atris-local", "apps/desktop"]
 }

@@ -1,6 +1,6 @@
 # AtrisShare contributor/agent guidance
 
-- This is a foundation preview. Distinguish contracts/plans from implemented behavior.
+- This is a local-workspace preview. Distinguish working desktop/state from future publishing/media/AI contracts.
 - Keep this repository standalone; never require sibling Atris repositories to build.
 - Inspect `git status` before writes. Do not commit, push, release or deploy unless asked.
 - Follow the current task and existing code conventions; keep changes scoped.
@@ -14,5 +14,6 @@
 - Keep provider credentials in the OS vault; never persist tokens in memory/prompts/logs.
 - Manual and AI edits use the same non-destructive timeline; AI changes are proposals.
 - Use official provider APIs and capability discovery. Report unsupported operations.
-- Foundation checks: `npm ci` then `npm run check`. Later runtime changes need focused
-  tests appropriate to their risk. Never describe a planned or mocked flow as live.
+- Checks: `npm ci` then `npm run check`; runtime staging/lifecycle: `npm run test:runtime`.
+  Native checks need Rust/Tauri prerequisites and `cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml`.
+  Never describe a planned or mocked flow as live. Keep `.atris-local/` verification data out of Git.

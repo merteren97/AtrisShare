@@ -1,7 +1,9 @@
-# Architecture — planned target
+# Architecture — local workspace and planned publishing
 
-The foundation preview implements TypeScript contracts and a manifest CLI only.
-Everything in the diagram below is a target boundary, not a running service.
+Phase 1 implements the React/Tauri desktop, authenticated loopback API, SQLite
+accounts/projects/context/memory/audit and a Windows DPAPI vault port. AI, MCP,
+media processing, queues, approval and social connectors in the diagram remain
+target boundaries. See [local workspace details](LOCAL-WORKSPACE.md).
 
 ## Local-first application
 
@@ -21,10 +23,11 @@ flowchart TD
 ```
 
 Target stack: React + TypeScript, Tauri 2, local Node.js services, SQLite, an OS
-credential vault, FFmpeg/FFprobe and the official MCP SDK. Concrete dependencies
-are introduced when their phase begins. Only TypeScript is installed today.
-Windows-first desktop acceptance is planned; macOS/Linux remain unverified
-until packaged and tested. The foundation has CI definitions for Windows/Linux.
+credential vault, FFmpeg/FFprobe and the official MCP SDK. FFmpeg and MCP are
+future dependencies. SQLite currently uses the API built into the pinned Node
+22 runtime, avoiding a separately compiled native addon. Windows native startup,
+CRUD and shutdown have been exercised; macOS/Linux desktop packages remain
+unverified. Source checks are configured for Windows/Linux CI.
 
 AtrisHub is the ecosystem website. No account, entitlement, hosted storage or
 execution dependency on AtrisHub is assumed by this template. Any future
@@ -40,7 +43,10 @@ integration needs a separate product decision.
   destination. Re-verify before an external side effect. Revoked permissions or
   a changed destination block the job and request reconnection/review.
 - A single OAuth identity may control several destinations; model them explicitly.
-- Store credentials in the OS vault; SQLite holds references, not token values.
+- Store future social credentials in the OS vault; SQLite must hold references,
+  not token values. Current demo accounts have no social credentials. The DPAPI
+  port is internal and not exposed through HTTP or frontend IPC. Unsupported or
+  unavailable vaults fail closed; there is no plaintext fallback.
 - Store brand voice, audience, edit history and publication receipts as scoped
   memory with provenance. AI suggestions remain distinguishable from confirmed
   preferences. Let users inspect, correct, export and delete this context.
@@ -68,7 +74,8 @@ MCP tools expose inspection, transcription, clip suggestions, edit proposals,
 preview renders, draft preparation and approval requests. They validate input,
 enforce account/project/artifact scope and support cancellation. No tool accepts
 arbitrary shell commands, reads the credential vault, approves or publishes.
-The TypeScript contracts do not enforce these rules; runtime checks are future work.
+Workspace runtime schemas and scope checks are implemented. Media/publishing
+contracts alone do not enforce the future MCP/publishing rules.
 
 ## Publication lifecycle
 

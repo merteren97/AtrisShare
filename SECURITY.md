@@ -1,7 +1,9 @@
 # Security reporting
 
 Only the latest preview source is in scope during early development. The
-foundation preview has no live social connectors, credential storage or server.
+local workspace exposes an authenticated loopback-only API and an internal
+Windows DPAPI vault port. There are no live social connectors or OAuth sessions
+in this milestone. Demo accounts do not store provider credentials.
 
 For a vulnerability, use the repository's **Security → Advisories → Report a
 vulnerability** private reporting flow when it is enabled. If that option is

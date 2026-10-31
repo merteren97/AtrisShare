@@ -1,0 +1,152 @@
+import { randomUUID } from "node:crypto";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import type {
+  AuditEvent, CreateAccountInput, CreateMemoryInput, CreateProjectInput, UpdateMemoryInput,
+  WorkspaceAccount, WorkspaceContext, WorkspaceMemory, WorkspaceProject
+} from "../../domain/src/workspace.js";
+import { contextSchema, createAccountSchema, createMemorySchema, createProjectSchema, idSchema, updateMemorySchema } from "../../domain/src/workspace.js";
+import { redactSensitiveText, WorkspaceError } from "./config.js";
+import { migrate } from "./migrations.js";
+
+type Row = Record<string, string | number | null>;
+const now = () => new Date().toISOString();
+const accountFrom = (r: Row): WorkspaceAccount => ({
+  id: String(r.id), displayName: String(r.display_name), platform: r.platform as WorkspaceAccount["platform"],
+  destinationId: String(r.destination_id), status: "demo", createdAt: String(r.created_at)
+});
+const projectFrom = (r: Row): WorkspaceProject => ({
+  id: String(r.id), accountId: String(r.account_id), name: String(r.name), description: String(r.description), createdAt: String(r.created_at)
+});
+const memoryFrom = (r: Row): WorkspaceMemory => ({
+  id: String(r.id), accountId: String(r.account_id), projectId: r.project_id as string | null,
+  kind: r.kind as WorkspaceMemory["kind"], text: String(r.text), reviewState: r.review_state as WorkspaceMemory["reviewState"],
+  revision: Number(r.revision), provenance: { sourceId: String(r.source_id), origin: "manual", recordedAt: String(r.recorded_at) }, updatedAt: String(r.updated_at)
+});
+
+export class WorkspaceStore {
+  private readonly db: DatabaseSync;
+  constructor(path: string) {
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    this.db = new DatabaseSync(path);
+    try { migrate(this.db); } catch (error) { this.db.close(); throw error; }
+  }
+  close(): void { this.db.close(); }
+  private transaction<T>(fn: () => T): T {
+    this.db.exec("BEGIN IMMEDIATE");
+    try { const result = fn(); this.db.exec("COMMIT"); return result; }
+    catch (error) { this.db.exec("ROLLBACK"); throw error; }
+  }
+  private audit(scope: WorkspaceContext, action: string, entityId: string): void {
+    this.db.prepare("INSERT INTO audit VALUES(?,?,?,?,?,'local-user',?)")
+      .run(randomUUID(), scope.accountId, scope.projectId, action, entityId, now());
+  }
+  listAccounts(): WorkspaceAccount[] {
+    return (this.db.prepare("SELECT * FROM accounts ORDER BY created_at, id").all() as Row[]).map(accountFrom);
+  }
+  createAccount(value: CreateAccountInput): WorkspaceAccount {
+    const input = createAccountSchema.parse(value);
+    return this.transaction(() => {
+      const id = randomUUID();
+      const account: WorkspaceAccount = { id, displayName: redactSensitiveText(input.displayName), platform: input.platform,
+        destinationId: `demo:${input.platform}:${id}`, status: "demo", createdAt: now() };
+      this.db.prepare("INSERT INTO accounts VALUES(?,?,?,?,?,?)").run(id, account.displayName, account.platform, account.destinationId, "demo", account.createdAt);
+      this.audit({ accountId: id, projectId: null }, "account.created", id);
+      if (!this.getContext()) this.saveContext({ accountId: id, projectId: null });
+      return account;
+    });
+  }
+  resolveContext(value: WorkspaceContext): WorkspaceContext {
+    const scope = contextSchema.parse(value);
+    if (!this.db.prepare("SELECT id FROM accounts WHERE id=?").get(scope.accountId)) throw new WorkspaceError(404, "context_not_found");
+    if (scope.projectId !== null && !this.db.prepare("SELECT id FROM projects WHERE id=? AND account_id=?").get(scope.projectId, scope.accountId)) {
+      throw new WorkspaceError(404, "context_not_found");
+    }
+    return scope;
+  }
+  getContext(): WorkspaceContext | null {
+    const r = this.db.prepare("SELECT * FROM context WHERE singleton=1").get() as Row | undefined;
+    return r ? { accountId: String(r.account_id), projectId: r.project_id as string | null } : null;
+  }
+  private saveContext(scope: WorkspaceContext): void {
+    this.db.prepare("INSERT INTO context VALUES(1,?,?) ON CONFLICT(singleton) DO UPDATE SET account_id=excluded.account_id,project_id=excluded.project_id")
+      .run(scope.accountId, scope.projectId);
+  }
+  setContext(value: WorkspaceContext): WorkspaceContext {
+    return this.transaction(() => {
+      const scope = this.resolveContext(value);
+      this.saveContext(scope);
+      this.audit(scope, "context.selected", scope.projectId ?? scope.accountId);
+      return scope;
+    });
+  }
+  listProjects(accountId: string): WorkspaceProject[] {
+    this.resolveContext({ accountId, projectId: null });
+    return (this.db.prepare("SELECT * FROM projects WHERE account_id=? ORDER BY created_at DESC, id").all(accountId) as Row[]).map(projectFrom);
+  }
+  createProject(value: CreateProjectInput): WorkspaceProject {
+    const input = createProjectSchema.parse(value);
+    return this.transaction(() => {
+      this.resolveContext({ accountId: input.accountId, projectId: null });
+      const project: WorkspaceProject = { id: randomUUID(), accountId: input.accountId, name: redactSensitiveText(input.name),
+        description: redactSensitiveText(input.description), createdAt: now() };
+      this.db.prepare("INSERT INTO projects VALUES(?,?,?,?,?)").run(project.id, project.accountId, project.name, project.description, project.createdAt);
+      this.audit({ accountId: project.accountId, projectId: project.id }, "project.created", project.id);
+      return project;
+    });
+  }
+  listMemory(value: WorkspaceContext): WorkspaceMemory[] {
+    const scope = this.resolveContext(value);
+    return (this.db.prepare("SELECT * FROM memory WHERE account_id=? AND project_id IS ? ORDER BY updated_at DESC, id").all(scope.accountId, scope.projectId) as Row[]).map(memoryFrom);
+  }
+  createMemory(value: CreateMemoryInput): WorkspaceMemory {
+    const input = createMemorySchema.parse(value);
+    return this.transaction(() => {
+      const scope = this.resolveContext(input.context);
+      const stamp = now();
+      const entry: WorkspaceMemory = { id: randomUUID(), ...scope, kind: input.kind, text: redactSensitiveText(input.text),
+        reviewState: input.reviewState, revision: 1, provenance: { sourceId: randomUUID(), origin: "manual", recordedAt: stamp }, updatedAt: stamp };
+      this.db.prepare("INSERT INTO memory VALUES(?,?,?,?,?,?,?,?,?,?)").run(entry.id, scope.accountId, scope.projectId,
+        entry.kind, entry.text, entry.reviewState, 1, entry.provenance.sourceId, stamp, stamp);
+      this.audit(scope, "memory.created", entry.id);
+      return entry;
+    });
+  }
+  private findMemory(id: string, scope: WorkspaceContext, revision: number): WorkspaceMemory {
+    idSchema.parse(id);
+    const row = this.db.prepare("SELECT * FROM memory WHERE id=? AND account_id=? AND project_id IS ?").get(id, scope.accountId, scope.projectId) as Row | undefined;
+    if (!row) throw new WorkspaceError(404, "memory_not_found");
+    const entry = memoryFrom(row);
+    if (entry.revision !== revision) throw new WorkspaceError(409, "revision_conflict");
+    return entry;
+  }
+  updateMemory(id: string, value: UpdateMemoryInput): WorkspaceMemory {
+    const input = updateMemorySchema.parse(value);
+    return this.transaction(() => {
+      const scope = this.resolveContext(input.context);
+      const previous = this.findMemory(id, scope, input.expectedRevision);
+      const entry = { ...previous, kind: input.kind, text: redactSensitiveText(input.text), reviewState: input.reviewState, revision: previous.revision + 1, updatedAt: now() };
+      this.db.prepare("UPDATE memory SET kind=?,text=?,review_state=?,revision=?,updated_at=? WHERE id=? AND account_id=? AND project_id IS ?")
+        .run(entry.kind, entry.text, entry.reviewState, entry.revision, entry.updatedAt, id, scope.accountId, scope.projectId);
+      this.audit(scope, "memory.updated", id);
+      return entry;
+    });
+  }
+  deleteMemory(id: string, value: WorkspaceContext, revision: number): void {
+    if (!Number.isSafeInteger(revision) || revision < 1) throw new WorkspaceError(400, "invalid_revision");
+    this.transaction(() => {
+      const scope = this.resolveContext(value);
+      this.findMemory(id, scope, revision);
+      this.db.prepare("DELETE FROM memory WHERE id=? AND account_id=? AND project_id IS ?").run(id, scope.accountId, scope.projectId);
+      this.audit(scope, "memory.deleted", id);
+    });
+  }
+  listAudit(value: WorkspaceContext): AuditEvent[] {
+    const scope = this.resolveContext(value);
+    return (this.db.prepare("SELECT * FROM audit WHERE account_id=? AND project_id IS ? ORDER BY recorded_at DESC,rowid DESC LIMIT 50").all(scope.accountId, scope.projectId) as Row[]).map(r => ({
+      id: String(r.id), accountId: String(r.account_id), projectId: r.project_id as string | null,
+      action: String(r.action), entityId: String(r.entity_id), actor: "local-user", recordedAt: String(r.recorded_at)
+    }));
+  }
+}

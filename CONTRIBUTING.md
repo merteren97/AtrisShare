@@ -1,6 +1,6 @@
 # Contributing to AtrisShare
 
-AtrisShare is a foundation preview. Read the [roadmap](docs/ROADMAP.md) and
+AtrisShare is a local-workspace preview. Read the [roadmap](docs/ROADMAP.md) and
 [architecture](docs/ARCHITECTURE.md) before taking on a feature. For substantial
 changes, discuss the intended scope in the repository's issue tracker first.
 
@@ -12,6 +12,11 @@ Use Node.js 22 LTS and npm 10+, then run from the repository root:
 npm ci
 npm run check
 ```
+
+Use `npm run dev` for the browser workspace or `npm run tauri:dev` with the
+native prerequisites installed. Runtime bundling/lifetime changes also need
+`npm run test:runtime`; Rust changes need the native tests documented in
+[local development](docs/LOCAL-WORKSPACE.md).
 
 Keep `package-lock.json` in source control. Do not commit build output, real
 account data, source footage, OAuth credentials or machine-local planning notes.

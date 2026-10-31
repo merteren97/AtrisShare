@@ -1,14 +1,14 @@
-# Desktop application boundary — planned
+# Desktop workspace — implemented in Phase 1
 
-Phase 1 will introduce a React + TypeScript + Tauri 2 desktop shell, following
-the local-first Atris application architecture. This directory is a reserved
-boundary, not an executable application.
+React + TypeScript + Vite + Tauri 2 shell, following the local-first Atris
+application architecture. Run `npm run dev` or `npm run tauri:dev` from the root.
 
-Planned surfaces: account/destination switcher, video workspace with timeline
-and optional AI side panel, text composer, clip candidates, calendar/queue,
-approval inbox, and account-scoped memory/settings.
+Implemented: demo account/destination switcher, project creation/selection,
+account/project-scoped memory CRUD/search/filter, audit and appearance/storage
+settings, Turkish/English UI and dark/light themes. Video/AI/composer/queue and
+approval surfaces are future phases.
 
 The desktop is a client of the authenticated local API. It does not own OAuth
 secrets, perform social publishing directly, or grant AI clients approval.
-Native notifications open the relevant approval detail; notification delivery
-alone is never approval. See [architecture](../../docs/ARCHITECTURE.md).
+Rust owns the API lifetime and its memory-only session bootstrap. See
+[local workspace](../../docs/LOCAL-WORKSPACE.md) and [architecture](../../docs/ARCHITECTURE.md).

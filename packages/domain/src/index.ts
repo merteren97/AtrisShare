@@ -1,4 +1,5 @@
-/** Foundation contracts only. Runtime validation and persistence are Phase 1 work. */
+/** Publishing/media contracts remain planned; local workspace types live in workspace.ts. */
+export * from "./workspace.js";
 export const SOCIAL_PLATFORMS = ["youtube", "x", "tiktok", "linkedin"] as const;
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 export type IsoTimestamp = string;

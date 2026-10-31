@@ -7,7 +7,7 @@
     <a href="https://atrishub.com">AtrisHub</a>
   </p>
   <p>
-    <img src="https://img.shields.io/badge/status-Foundation%20Preview-orange" alt="Temel Ön İzleme" />
+    <img src="https://img.shields.io/badge/status-Local%20Workspace%20Preview-orange" alt="Yerel Çalışma Alanı Ön İzlemesi" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache Lisansı 2.0" /></a>
   </p>
 </div>
@@ -20,11 +20,15 @@ yerel öncelikli bir çalışma alanıdır. Hedef; manuel veya AI yardımıyla v
 düzenlemek, kısa klipler çıkarmak, yazı hazırlamak, birden fazla hesabı yönetmek
 ve paylaşımları tek uygulama üzerinden planlamaktır.
 
-**Foundation Preview `0.1.0-preview.0`:** bu sürüm derlenebilir bir TypeScript
-proje iskeleti, temel veri sözleşmeleri ve geliştirme belgeleri içerir.
-Masaüstü uygulaması, sosyal hesap bağlantıları, video işleme, AI/MCP entegrasyonu,
-bildirimler ve yayınlama **planlanmıştır; henüz uygulanmamıştır**. Bu ön izlemede
-masaüstü kurulum paketi veya gerçek hesaplara paylaşım özelliği yoktur.
+**Yerel Çalışma Alanı Ön İzlemesi `0.1.0-preview.1`:** React/Tauri masaüstü,
+oturum doğrulamalı yerel API, SQLite projeler, kalıcı hesap/proje seçimi ve kapsamlı
+hafıza yönetimi uygulanmıştır. Açıkça demo etiketli hedefler ve projeler oluşturabilir,
+kaynak bilgisi ile öneri/onaylı durumları tutulan notlar ekleyebilir, düzenleyebilir
+ve silebilirsin. Koyu/açık tema ve Türkçe/İngilizce arayüz vardır. Windows DPAPI
+tabanlı dahili kimlik kasası arayüzü hazırdır; demo hedefler sosyal token tutmaz.
+
+Gerçek sosyal OAuth bağlantıları, video işleme, AI/MCP, bildirimler, zamanlayıcı
+ve gerçek paylaşım **henüz uygulanmamıştır**. İmzalı kurulum paketi yayınlanmadı.
 
 ## Planlanan kullanım akışı
 
@@ -38,9 +42,10 @@ masaüstü kurulum paketi veya gerçek hesaplara paylaşım özelliği yoktur.
 7. Her paylaşım öncesinde bildirim al; son içeriği ve hedef hesabı onayla.
    Onaylanmayan zamanlanmış işler bekler; kendiliğinden yayınlanmaz.
 
-Hesaba özel hafızada marka dili, hedef kitle bağlamı, önceki düzenlemeler ve
-paylaşım geçmişi tutulması planlanır. Her işlemden önce hesap bağlamı kontrol
-edilir; hesap değişince diğer hesabın tercihleri veya onayları taşınmaz.
+Hesap/proje kapsamlı notlarla marka dili, hedef kitle ve kararlar şimdiden tutulabilir.
+Otomatik düzenleme/paylaşım geçmişi ve AI bağlam getirme sonraki aşamalarda gelir.
+Her hafıza işleminde açık kapsam kontrol edilir; ileride paylaşım onayları da
+oluşturuldukları hesap ve hedefe bağlı kalacaktır.
 
 ## AI seçimi ve video araçları
 
@@ -63,7 +68,7 @@ bağlıdır. YouTube video listesine erişmek kaynak videoyu indirme yetkisi vey
 API’si sağlamaz. Shorts/kısa video davranışı yalnızca dosya adı veya süreye göre
 varsayılmayacak, platform özelinde doğrulanacaktır. [Platform notları](docs/PLATFORMS.md).
 
-## Temel ön izlemeyi çalıştırma
+## Yerel çalışma alanını çalıştırma
 
 Gereksinimler: **Node.js 22 LTS** (`.nvmrc`) ve **npm 10+**.
 Bu projenin klasöründe çalıştır:
@@ -73,46 +78,62 @@ npm ci
 npm run check
 ```
 
-`check`, tür kontrolü ve derleme yaptıktan sonra JSON biçiminde bir ön izleme
-manifestosu yazdırır. Masaüstü uygulaması başlatmaz, sağlayıcılara bağlanmaz,
-paylaşım yapmaz.
+`check`; tür kontrollerini, API/veri testlerini ve üretim arayüz/core derlemesini
+çalıştırır. Sosyal sağlayıcılara bağlanmaz veya paylaşım yapmaz.
 
 ```bash
-npm run typecheck  # Statik veri sözleşmesi kontrolü
-npm run build      # dist/ klasörüne derleme
-npm run preview    # Derle ve ön izleme manifestosunu yazdır
+npm run dev        # Tarayıcı geliştirmesi: http://127.0.0.1:1438
+npm run tauri:dev  # Native masaüstü geliştirmesi
+npm run preview    # Özellik/durum manifestosu (arayüz sunucusu değildir)
 ```
 
-`.env.example`, ileride kullanılacak yerel ayarları belgeler; mevcut CLI bu
-ayarları okumaz. Bu aşamada Rust, Tauri gereksinimleri veya FFmpeg gerekmez.
+Native geliştirme için ayrıca Rust stable, Tauri 2 platform gereksinimleri,
+Windows'ta WebView2 ve Microsoft C++ Build Tools gerekir. `npm ci`, npm komutları
+ve paketleme için sabitlenen Node 22 çalışma zamanını kurar. Bu aşamada FFmpeg
+gerekmez. Node 22'nin dahili SQLite API'si upstream'de deneysel işaretlidir;
+ayrıca native SQLite eklentisi derlemeye gerek yoktur.
+
+Önce **demo hesap** ekle, bir proje oluştur ve **Hafıza** bölümünü aç. Hesap notları
+için **Hesap geneli**, proje notları için ilgili projeyi seç; bu kapsamlar bilinçli
+olarak ayrı tutulur. Seçim ve notlar yeniden başlatmada korunur.
+
+Veriler Windows'ta `%LOCALAPPDATA%\AtrisShare`, macOS'ta `~/Library/Application
+Support/AtrisShare`, Linux'ta `$XDG_DATA_HOME/AtrisShare` veya
+`~/.local/share/AtrisShare` altında tutulur. `ATRIS_SHARE_DATA_DIR`, **mutlak bir yol**
+ile değiştirilebilir. `.env.example` referanstır; otomatik yüklenmez.
+API oturum anahtarı yalnızca bellekte kalır ve her başlatmada yenilenir.
+
+Komutlar, servis yaşam döngüsü, veri katmanı ve API için [yerel geliştirme
+belgesine](docs/LOCAL-WORKSPACE.md) bak. Windows/Linux CI kontrolleri tanımlıdır;
+native Windows yerelde denenmiştir. macOS/Linux masaüstü paketleri doğrulanmadı.
 
 ## Proje yapısı
 
 ```text
 apps/
-  preview-cli/       Çalışan temel ön izleme manifestosu
-  desktop/           Planlanan React + Tauri uygulaması
+  preview-cli/       Özellik/durum manifestosu
+  desktop/           React + Vite + Tauri uygulaması
 packages/
-  domain/            İlk TypeScript veri sözleşmeleri
+  domain/            Veri sözleşmeleri ve runtime doğrulama şemaları
   ai-bridge/         Planlanan CLI/runtime entegrasyonu
   connectors/        Planlanan resmi sosyal medya API’leri
   media-engine/      Planlanan zaman çizelgesi ve video işleme
-  storage/           Planlanan SQLite ve hesap hafızası
+  storage/           SQLite migration/repository ve DPAPI kasa arayüzü
 services/
-  local-api/         Planlanan güvenilir uygulama API’si
+  local-api/         Oturum doğrulamalı loopback uygulama API’si
   mcp-server/        Planlanan hesap/proje kapsamına bağlı AI araçları
   worker/            Planlanan video ve paylaşım işçileri
 docs/                Herkese açık mimari, yol haritası ve platform notları
 ```
 
-Şu anda yalnızca `domain` ve `preview-cli` derlenebilir/çalıştırılabilir kaynak
-içerir. Diğer klasörler uygulama sınırlarını açıklayan notlardır; çalışan servis değildir.
+Masaüstü, domain, veri katmanı, yerel API ve preview CLI uygulanmıştır. AI köprüsü,
+sosyal bağlayıcılar, medya motoru, MCP ve kalıcı işçiler planlama aşamasındadır.
 
 ## Yol haritası ve katkı
 
-Sonraki hedef, yerel masaüstü temeli ve kalıcı hesap/proje verileridir. Ardından
-YouTube için uçtan uca, onaylı ilk paylaşım akışı gelir. Manuel editör, AI/MCP,
-otomatik klip çıkarma, zamanlayıcı ve diğer platformlar aşamalı olarak eklenir.
+Sonraki hedef, gerçek OAuth/kanal doğrulamasıyla YouTube için uçtan uca, onaylı
+ilk paylaşım akışıdır. Manuel editör, AI/MCP, otomatik klip çıkarma, zamanlayıcı
+ve diğer platformlar aşamalı olarak eklenir.
 
 - [Yol haritası](docs/ROADMAP.md)
 - [Mimari ve güven sınırları](docs/ARCHITECTURE.md)
@@ -123,7 +144,7 @@ otomatik klip çıkarma, zamanlayıcı ve diğer platformlar aşamalı olarak ek
 ## Atris ekosistemi
 
 Diğer Atris uygulamalarını **[atrishub.com](https://atrishub.com)** adresinde
-keşfedebilirsin. AtrisShare bağımsız bir depodur; bu temel ön izlemeyi çalıştırmak
+keşfedebilirsin. AtrisShare bağımsız bir depodur; bu yerel çalışma alanını çalıştırmak
 için AtrisHub hesabı veya AtrisAgent kaynak kodu gerekmez.
 
 ## Lisans

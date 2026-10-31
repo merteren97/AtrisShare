@@ -1,22 +1,32 @@
 {
   "name": "atris-share",
-  "version": "0.1.0-preview.0",
+  "version": "0.1.0-preview.1",
   "private": true,
-  "description": "Local-first, AI-assisted social publishing and video creation workspace — foundation preview.",
+  "description": "Local-first social workspace — desktop and persistent context preview.",
   "license": "Apache-2.0",
   "type": "module",
   "engines": {
-    "node": ">=22.0.0 <27",
+    "node": ">=22.13.0 <27",
     "npm": ">=10"
   },
   "workspaces": ["apps/*", "packages/*", "services/*"],
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.build.json",
-    "preview": "npm run build && node dist/apps/preview-cli/src/index.js",
-    "check": "npm run typecheck && npm run preview"
+    "dev": "npm run dev -w @atris-share/desktop",
+    "typecheck": "tsc --noEmit && npm run typecheck -w @atris-share/desktop",
+    "build:core": "tsc -p tsconfig.build.json",
+    "build": "npm run build:core && npm run build -w @atris-share/desktop",
+    "test": "npm run build:core && node --test tests/storage.test.mjs tests/api.test.mjs",
+    "test:runtime": "npm run stage:runtime && node --test tests/runtime.test.mjs",
+    "preview": "npm run build:core && node dist/apps/preview-cli/src/index.js",
+    "check": "npm run typecheck && npm test && npm run build",
+    "tauri:dev": "npm run build:core && npm run tauri:dev -w @atris-share/desktop",
+    "tauri:build": "npm run tauri:build -w @atris-share/desktop",
+    "stage:runtime": "node scripts/stage-runtime.mjs"
   },
   "devDependencies": {
-    "typescript": "5.9.3"
+    "typescript": "5.9.3",
+    "@types/node": "^22.19.0",
+    "esbuild": "^0.25.12",
+    "node": "22.23.2"
   }
 }

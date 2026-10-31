@@ -7,7 +7,7 @@
     <a href="https://atrishub.com">AtrisHub</a>
   </p>
   <p>
-    <img src="https://img.shields.io/badge/status-Foundation%20Preview-orange" alt="Foundation Preview" />
+    <img src="https://img.shields.io/badge/status-Local%20Workspace%20Preview-orange" alt="Local Workspace Preview" />
     <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache License 2.0" /></a>
   </p>
 </div>
@@ -19,11 +19,15 @@ video creation and social publishing across **YouTube, X, TikTok and LinkedIn**.
 The goal is one place to edit videos manually or with an AI assistant, discover
 short-form clips, write posts, manage multiple accounts and organize publishing.
 
-**Foundation Preview `0.1.0-preview.0`:** this repository currently contains a
-buildable TypeScript workspace, domain contracts and development documentation.
-The desktop app, social connections, video processing, AI/MCP integrations,
-notifications and publishing are **planned, not implemented**. There is no
-desktop installer or live publishing in this preview.
+**Local Workspace Preview `0.1.0-preview.1`:** the React/Tauri desktop, authenticated
+local API, SQLite projects, persistent account/project selection and scoped memory
+are implemented. Create clearly labeled demo targets, organize projects and
+create/edit/delete notes with provenance and suggested/confirmed states. Dark/light
+themes and Turkish/English UI are available. Windows DPAPI provides an internal
+credential-vault port; demo targets do not store social credentials.
+
+Social OAuth connections, video processing, AI/MCP, notifications, scheduling and
+live publishing are **not implemented yet**. No signed installer is released.
 
 ## Planned workflow
 
@@ -37,9 +41,10 @@ desktop installer or live publishing in this preview.
 7. Receive a notification and approve the final destination and content before
    each publication. Unapproved scheduled jobs wait; they do not auto-publish.
 
-Account-scoped memory is planned for brand voice, audience context, previous
-edits and publishing history. Context will be checked before each operation;
-changing accounts must not leak another account's preferences or approvals.
+Account/project-scoped notes already support brand voice, audience and decisions.
+Automatic edit/publishing history and AI retrieval will follow. Each memory
+operation checks its explicit context; future publication approvals will also
+remain bound to their original account and destination.
 
 ## AI choice and video tooling
 
@@ -61,7 +66,7 @@ catalog does not by itself provide permission or an API to download source foota
 Shorts/short-video behavior will be validated per platform, not assumed from a
 file name or a fixed duration. See [platform notes](docs/PLATFORMS.md).
 
-## Run the foundation preview
+## Run the local workspace
 
 Prerequisites: **Node.js 22 LTS** (see `.nvmrc`) and **npm 10+**.
 From this repository directory:
@@ -71,45 +76,62 @@ npm ci
 npm run check
 ```
 
-`check` type-checks and builds the scaffold, then prints a JSON preview manifest.
-It does not start a desktop app, contact a provider or publish content.
+`check` runs type checks, API/storage tests and a production frontend/core build.
+It does not contact social providers or publish content.
 
 ```bash
-npm run typecheck  # Static contract checks
-npm run build      # Compile to dist/
-npm run preview    # Build and print the preview manifest
+npm run dev        # Browser development: http://127.0.0.1:1438
+npm run tauri:dev  # Native desktop development
+npm run preview    # Print a feature/status manifest (not a frontend server)
 ```
 
-`.env.example` documents reserved future local settings; the preview CLI does
-not read them. Rust, Tauri prerequisites and FFmpeg are not needed for this stage.
+Native development additionally requires Rust stable, Tauri 2 platform
+prerequisites, and on Windows WebView2 plus Microsoft C++ Build Tools.
+`npm ci` installs the pinned Node 22 runtime used by npm scripts and packaging.
+FFmpeg is not required in this phase. Node 22's built-in SQLite API is marked
+experimental upstream; no separately compiled SQLite addon is needed.
+
+Start by adding a **demo account**, creating a project, then opening **Memory**.
+Select **Account-wide** for account notes or a specific project for project notes;
+these scopes are intentionally separate. Selection and notes survive restarts.
+
+Data defaults to `%LOCALAPPDATA%\AtrisShare` on Windows, `~/Library/Application
+Support/AtrisShare` on macOS and `$XDG_DATA_HOME/AtrisShare` (or
+`~/.local/share/AtrisShare`) on Linux. `ATRIS_SHARE_DATA_DIR` can override it with
+an **absolute path**. `.env.example` is a reference, not automatically loaded.
+The session token remains in memory and rotates on every runtime launch.
+
+See [local development and API](docs/LOCAL-WORKSPACE.md) for commands, lifecycle,
+storage and validation details. CI checks are configured for Windows/Linux; native
+Windows has been exercised locally. macOS/Linux desktop packages are unverified.
 
 ## Repository layout
 
 ```text
 apps/
-  preview-cli/       Runnable foundation manifest
-  desktop/           Planned React + Tauri application boundary
+  preview-cli/       Feature/status manifest
+  desktop/           React + Vite + Tauri application
 packages/
-  domain/            Initial TypeScript contracts
+  domain/            Contracts and runtime workspace schemas
   ai-bridge/         Planned CLI/runtime integration
   connectors/        Planned official social APIs
   media-engine/      Planned timeline and video pipeline
-  storage/           Planned SQLite and account memory
+  storage/           SQLite migrations, repositories, DPAPI vault port
 services/
-  local-api/         Planned trusted application API
+  local-api/         Authenticated loopback application API
   mcp-server/        Planned scoped AI tools
   worker/            Planned media and publishing workers
 docs/                Public architecture, roadmap and platform notes
 ```
 
-Only `domain` and `preview-cli` currently contain executable/compilable source.
-The other boundaries have implementation notes; they are not working services.
+Desktop, domain, storage, local API and preview CLI are implemented. AI bridge,
+connectors, media engine, MCP and durable workers remain planned boundaries.
 
 ## Roadmap and contributions
 
-The next milestone is the local desktop foundation and durable account/project
-state, followed by one end-to-end, approval-gated YouTube flow. Manual editing,
-AI/MCP, automatic clipping, scheduling and additional platforms follow in phases.
+The next milestone is one end-to-end, approval-gated YouTube flow with real
+OAuth/channel verification. Manual editing, AI/MCP, automatic clipping, scheduling
+and additional platforms follow in phases.
 
 - [Roadmap](docs/ROADMAP.md)
 - [Architecture and trust boundaries](docs/ARCHITECTURE.md)
@@ -120,7 +142,7 @@ AI/MCP, automatic clipping, scheduling and additional platforms follow in phases
 ## Atris ecosystem
 
 Discover the Atris applications at **[atrishub.com](https://atrishub.com)**.
-AtrisShare is a standalone repository; running this foundation preview does not
+AtrisShare is a standalone repository; running this local workspace does not
 require AtrisHub credentials or an AtrisAgent checkout.
 
 ## License

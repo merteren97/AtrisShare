@@ -1,13 +1,15 @@
-# Storage boundary — planned
+# Storage — Phase 1
 
-SQLite migrations and repositories for accounts, projects, artifacts, timeline
-revisions, edit proposals, drafts, jobs, schedules, approvals, memory and audit
-events. Durable state lives in an application data directory outside source.
+Implemented: SQLite migrations/repositories for demo accounts, projects,
+selection, scoped memory and audit. Durable state defaults to an application
+data directory outside source. Node 22's built-in SQLite avoids a native addon.
 
-OAuth tokens live in the OS credential vault; the database stores references.
-Memory retrieval requires account/project scope, provenance and a distinction
-between AI suggestions and user-confirmed preferences. Support correction,
-export, retention controls and deletion. Memory is context, never authority.
+The internal Windows DPAPI vault port uses account references and encrypted
+atomic file writes. Demo accounts have no OAuth tokens; other OS vaults report
+unavailable with no plaintext fallback. Memory read/update/delete requires exact
+account/project scope. Corrections retain provenance and use optimistic revisions;
+mutation and content-free audit are transactional. Memory is context, never authority.
 
-Job persistence needs transactional claims, leases/fencing, approval
-consumption and restart recovery; an in-memory timer is insufficient.
+Future migrations will add artifacts/timelines/drafts/jobs/schedules/approvals.
+Memory export/retention and queue claims/recovery are later milestones.
+See [local workspace](../../docs/LOCAL-WORKSPACE.md).

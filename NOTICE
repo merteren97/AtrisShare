@@ -5,6 +5,7 @@ Licensed under the Apache License, Version 2.0.
 
 Atris ecosystem: https://atrishub.com
 
-This foundation template does not bundle AtrisAgent source, AI CLI tools,
-FFmpeg binaries or social platform SDKs. Preserve applicable attribution and
-license notices when adapting or bundling third-party components in later phases.
+This repository does not include AtrisAgent source, AI CLI tools, FFmpeg or
+social platform SDKs. Native runtime staging includes pinned Node.js and Zod
+with their license texts. Frontend dependencies retain their own licenses.
+Preserve applicable attribution and notices when adapting or bundling components.
