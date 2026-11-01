@@ -1,5 +1,5 @@
 import { build } from "esbuild";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
@@ -13,6 +13,32 @@ await build({
   entryPoints: [join(root, "services", "local-api", "src", "entry.ts")], outfile: join(output, "api.mjs"),
   bundle: true, platform: "node", format: "esm", target: "node22", legalComments: "linked"
 });
+const mcpBuild = await build({
+  entryPoints: [join(root, "services", "mcp-server", "src", "index.ts")], outfile: join(output, "mcp.mjs"),
+  bundle: true, platform: "node", format: "esm", target: "node22", legalComments: "linked", metafile: true,
+  banner: { js: 'import { createRequire as __atrisCreateRequire } from "node:module"; const require = __atrisCreateRequire(import.meta.url);' }
+});
+// Preserve full license texts for the actual bundled MCP dependency graph.
+const packages = new Map();
+for (const input of Object.keys(mcpBuild.metafile.inputs)) {
+  if (!input.includes("node_modules/")) continue;
+  let directory = dirname(resolve(input));
+  while (directory.startsWith(root)) {
+    try {
+      const manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
+      if (manifest.name && !packages.has(directory)) packages.set(directory, manifest);
+      break;
+    } catch { const parent = dirname(directory); if (parent === directory) break; directory = parent; }
+  }
+}
+const notices = [];
+for (const [directory, manifest] of packages) {
+  notices.push(`${manifest.name}@${manifest.version} (${manifest.license ?? "see license"})`);
+  for (const name of await readdir(directory)) if (/^(licen[cs]e|copying|notice)(\.|$)/i.test(name)) {
+    try { notices.push(await readFile(join(directory, name), "utf8")); } catch { /* Some packages use a license directory. */ }
+  }
+}
+await writeFile(join(output, "MCP-THIRD-PARTY-NOTICES.txt"), notices.join("\n\n---\n\n"));
 await copyFile(process.execPath, join(output, process.platform === "win32" ? "node.exe" : "node"));
 let nodeLicense;
 try {

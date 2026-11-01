@@ -1,11 +1,15 @@
 # Changelog
 
-## Unreleased — supervised YouTube and single-clip Studio
+## Unreleased — manual editor and Phase 4 core features
 
 - Desktop OAuth with PKCE S256, one-use state, expected channel and Google subject verification.
 - Encrypted account credentials, refresh/re-verification, local disconnect and optional Google grant revocation.
 - Transactional v1 migration preserving projects/memory, copy-on-write credential generations and stale-writer fencing.
 - TR/EN Accounts connection states, pending-session recovery, identity/scope inspection and disconnect confirmation.
+- In-app YouTube Desktop OAuth setup: client ID and optional public-client secret saved under a reserved
+  encrypted DPAPI vault reference, immediate activation and restart persistence. Safe readiness/source only,
+  no saved-value readback or browser storage; local configuration overrides environment fallback. Session/configuration
+  races are fenced; existing connected-account grants retain their original client configuration for refresh/revoke.
 - Immutable managed media with SHA-256, account/project isolation and up to 2 GiB streaming imports:
   self-contained MP4-family (`.mp4`/`.mov`) and WebM only; `.mkv` requires WebM content, not general Matroska.
 - Authenticated Blob preview/download capped at 256 MiB; owned-channel catalog pagination and verified local-file linking.
@@ -13,14 +17,54 @@
   resumable upload, processing checks, durable receipts and reconciliation. Session URLs are encrypted in the vault;
   durable ownership leases fence competing workers. Ambiguous/missing sessions never trigger blind re-initiation.
 - Persistent dispatch revocation on upload cancellation; remote effects already accepted cannot be promised undone.
-- Manual single-clip trim, original/vertical/square crop, caption and audio gain; revisioned save, undo/redo,
-  reopen and export progress/cancel. Retry creates a new export; multi-track, split and proxies remain unimplemented.
+- Phase 3 limited manual-editor scope complete: trim/split/remove, 1–32 chronological non-overlapping kept
+  ranges within outer bounds, actual gap-removing concat with shared A/V origin and silence padding including
+  audio offsets; original/vertical/square crop, static caption and gain. Revision/CAS save, undo/redo branching,
+  reopen and export progress/cancel; retry creates a new export. No multi-track or timed captions.
+- Source/hash-linked full-video H.264/AAC compatible proxies, at most 1280×720, preserving rotation/display
+  aspect and source-time playback; source/proxy switching retains position. Proxies are not publication artifacts.
+- Phase 4 core feature implementation complete: safe native OpenCode discovery, currently verified 1.19.5 only
+  (other versions fail closed), actual CLI model IDs and user-selected one-shot generation. Model listing is
+  not entitlement proof. CLI auth-store path is preserved; credentials are never read/copied by AtrisShare.
+- Isolated temporary cwd/config/cache/database and transcript cleanup; effective config/agent permission
+  verification denies file/tool/skill/MCP access in the child. Requests carry scoped metadata/current timeline
+  plus separate optional confirmed-memory and transcript context, never media/frame/audio bytes. Speech stays local
+  until an explicit `includeTranscript` prompt checkbox; transcript context is capped at 16,000 text characters /
+  150 segments with timestamps, language, duration, source hash and `truncated` metadata.
+- Local whisper.cpp CLI transcription via external `ATRIS_SHARE_WHISPER_CLI` / absolute `ATRIS_SHARE_WHISPER_MODEL`;
+  FFmpeg extracts 16 kHz mono 16-bit PCM. Two-hour limit, language/timestamp validation, actual source hash checks
+  before/after, sanitized scoped SQLite transcripts, progress, durable cancel and heartbeat/lease-fenced restart
+  interruption; no automatic retry/resume. No speech tool/model bundling or automatic download.
+- Persistent immutable, scope/source-hash/base-revision-bound proposals, preview and human accept/reject;
+  accepted edits use the manual timeline and undo. Local proposal/run history persists. Cancellation is durable
+  across runtimes; no CLI resume, AI approval or AI publishing.
+- Official MCP SDK 1.32.2 stdio server with separate UI-minted 30-minute artifact/account/project/destination
+  capability, expiry/revoke/restart invalidation and actual command/environment configuration. No desktop bearer
+  is shared. Tools: metadata inspection, timeline/optional confirmed memory read, proposal, preview/status and
+  review-only publication request. New `media_transcribe`, `transcript_status` and `transcript_cancel` return metadata
+  with empty segments; `transcript_read` is advertised/allowed only with explicit opt-in, actual-source-byte hash
+  verification and `offset`/`limit` pagination (max 100 segments). Unconsented grants receive no speech text.
+  No approve or publish tool.
+- Standalone `npm run build` then `npm run mcp:stdio` with UI-issued environment; staged `mcp.mjs`, pinned Node
+  and full third-party license notices for packaged launch.
 - External FFmpeg/FFprobe via `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or `PATH`; no media binaries bundled.
   H.264/AAC export and caption `drawtext`; temporary GPL-enabled verification tools are not distribution artifacts.
 - Custom Windows titlebar and kill-on-close Windows Job Object ownership of the runtime/media process tree.
 - Controlled-provider regression coverage exercises actual services, not live Google. Phase 2 code is implemented;
-  live connection/publication acceptance requires a user-owned OAuth app, authorized channel and human approval.
-  Phase 3 is a partial single-clip slice. AI/MCP, notifications, scheduling and other connectors remain planned.
+  live connection/publication acceptance is deferred to Phase 9 and requires a user-owned OAuth app, authorized
+  channel and human approval.
+  Prior local native checks verified a real six-second source/full-source proxy, 0–2 + 4–6 → four-second export and
+  unchanged source hash. OpenCode 1.19.5 returned nine routes in the native UI. An external official-SDK client
+  exercised deterministic proposal/preview/human apply/manual undo; this was not LLM inference.
+  This is local engineering evidence, not live provider or final all-feature acceptance. The first real OpenCode
+  adapter is implemented; additional CLI adapters are future extensions, not incomplete Phase 0–4 obligations.
+  Automated clip analysis, notifications, scheduling and other connectors remain planned; no UI phase badges.
+- Updated delivery order: features through Phases 0–4 implemented within scope; Phase 3 limited editor complete,
+  Phase 4 core implementation complete. Phase 8 covers hardening, packaging and feature completion before new
+  final Phase 9 live AI/YouTube and all-feature end-to-end acceptance for Phases 0–8 (`docs/ACCEPTANCE.md`).
+  Local regressions/builds/rendered/native UI checks continue; deferred acceptance is not missing implementation.
+  No secrets were provided and no live OAuth/inference tests were run. Release authorization only after Phase 9
+  and a separate explicit request; no automatic earlier release.
 
 ## 0.1.0-preview.1 — Local workspace
 
@@ -32,8 +76,8 @@
 - Turkish/English UI, dark/light themes, search/filters, error/retry and keyboard-safe dialogs.
 - Pinned/bundled Node runtime, native startup/readiness/shutdown and isolated runtime smoke tests.
 
-Real social connections, video processing, AI/MCP, publication approval,
-notifications, scheduling and live publishing remain pending.
+At this release, real social connections, video processing, AI/MCP, publication
+approval, notifications, scheduling and live publishing were pending.
 
 ## 0.1.0-preview.0 — Foundation preview
 
@@ -44,5 +88,5 @@ notifications, scheduling and live publishing remain pending.
 - English/Turkish README, public architecture, roadmap and platform notes.
 - Apache-2.0 license, contributor guidance and Windows/Linux foundation CI.
 
-This is a source scaffold, not a released desktop application. Live account
-connection, editing, AI/MCP, notifications, scheduling and publishing are pending.
+This release was a source scaffold, not a released desktop application. Live account
+connection, editing, AI/MCP, notifications, scheduling and publishing were pending.

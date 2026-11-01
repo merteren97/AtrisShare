@@ -26,7 +26,7 @@ create/edit/delete notes with provenance and suggested/confirmed states. Dark/li
 themes and Turkish/English UI are available. Windows DPAPI provides an internal
 credential vault; demo targets do not store social credentials.
 
-**Phase 2 code is implemented; live acceptance is pending:** YouTube Desktop
+**Phase 2 features are implemented; live acceptance is deferred to Phase 9:** YouTube Desktop
 OAuth/PKCE, subject/channel verification, vault storage, refresh/disconnect, owned
 catalog pagination and local-file linking, immutable publication review, resumable
 upload, processing checks and receipts/reconciliation. Tests exercise the real
@@ -34,12 +34,23 @@ services with controlled providers, **not live Google**. A live connection or
 publication requires your own OAuth app, authorized channel and explicit human
 approval; no live Google acceptance is claimed. See [YouTube](docs/YOUTUBE.md).
 
-**Phase 3 is partial:** Studio imports immutable managed media and provides a manual
-single-clip editor: trim, original/vertical/square crop, caption, audio gain,
-revisioned save, undo/redo, reopen and export progress/cancel. Retry starts a new
-export. Multi-track editing, split and proxies are not implemented. Windows has a
-custom titlebar and kill-on-close ownership of the runtime/media process tree.
-AI/MCP, notifications, scheduling and other social connections remain planned.
+**Phase 3 is complete within its limited manual-editor scope:** immutable source
+media, full-source compatible proxies (H.264/AAC, at most 1280×720, rotation and
+display aspect preserved), source-time playback, trim/split/remove with 1–32 ordered,
+non-overlapping kept ranges within outer bounds and real gap-removing concatenation.
+Exports preserve a shared A/V origin and pad missing audio intervals, including audio offsets. Centered
+original/vertical/square crop, static caption, gain, revision-checked save,
+undo/redo branching, reopen and export progress/cancel are available. Retry starts
+a new export. Multi-track editing and timed captions are not implemented.
+
+**Phase 4 core feature implementation is complete:** an isolated OpenCode bridge,
+model selection, persistent reviewable edit proposals, local timestamped transcription
+and official-SDK stdio MCP with explicit transcript-read consent. Local native checks
+covered actual OpenCode 1.19.5 discovery and an external SDK client's deterministic
+proposal → preview → human apply → undo flow, **not live LLM inference**. OpenCode is
+the required first real adapter; additional CLI adapters are future extensions.
+Windows has a custom titlebar and kill-on-close runtime ownership; the UI has no
+phase badges. Notifications, scheduling and other social connections remain planned.
 No signed installer is released.
 
 ## Planned workflow
@@ -55,28 +66,50 @@ No signed installer is released.
    each publication. Unapproved scheduled jobs wait; they do not auto-publish.
 
 Account/project-scoped notes support brand voice, audience and decisions; successful
-exports/publications add scoped history notes. AI retrieval remains planned. Each memory
-operation checks its explicit context; implemented YouTube approvals bind the
+exports/publications add scoped history notes. AI can optionally use confirmed
+account/project notes. Each memory operation checks its explicit context;
+implemented YouTube approvals bind the
 original account, project, destination, metadata and artifact SHA-256. Each explicit
 approval is single-use with a 10-minute dispatch window. Cancellation persists
 dispatch revocation; it cannot promise to undo effects already accepted remotely.
 
 ## AI choice and video tooling
 
-The planned AI bridge adapts the CLI/runtime patterns used by AtrisAgent, with
-capability-based model discovery rather than a single mandatory AI provider.
-Initial runtime candidates are Codex CLI, Claude Code, OpenCode and Antigravity CLI.
-They are not integrated yet and will require their official installation/login.
+`OpenCodeBridge` safely discovers a native installation and currently accepts only
+verified **OpenCode 1.19.5**; other versions fail closed. Install/login with the
+official CLI. AtrisShare preserves its auth-store path without reading or copying
+credentials. Temporary working/config/cache/database state is isolated and cleaned;
+effective config and agent permissions are checked, with files, tools, skills and
+MCP unavailable to the child. Model IDs come from the actual CLI, not proof of
+account entitlement. Codex CLI, Claude Code and Antigravity CLI are not implemented.
 
-A local **MCP** interface is planned for compatible external AI clients. It will
-expose bounded media inspection, clip suggestions, edit proposals and preview
-rendering. FFmpeg-backed workers perform the editing. AI may request publication
-approval; only the trusted application can accept a human decision and publish.
+Generate sends your request and scoped metadata/current timeline to the selected
+model. Confirmed account/project memory is a separate opt-in. Speech stays local
+unless you explicitly check **include transcript** (`includeTranscript`): this adds
+at most **16,000 text characters / 150 segments**, with timestamps, language, duration,
+source hash and a `truncated` flag. No media bytes, frames or audio are sent.
+The temporary CLI transcript is removed; local AtrisShare
+proposal/run history persists. Immutable proposals bind scope, source hash and base
+revision; humans preview and accept/reject. Cancellation is durable across runtimes;
+CLI calls are one-shot, with no resume. See [AI bridge](packages/ai-bridge/README.md).
+
+External **MCP stdio** uses official SDK **1.32.2** and a separate, UI-minted
+30-minute account/project/destination/artifact grant, revocable in the UI and
+invalidated by runtime restart. The UI provides the actual
+command and `ATRIS_SHARE_MCP_ORIGIN` / `ATRIS_SHARE_MCP_GRANT` environment config;
+never pass the desktop bearer to external clients. Tools inspect metadata, read
+timelines/optional confirmed memory, start/check/cancel local transcription, propose
+edits, render previews/check status and create publication review requests.
+`transcript_read` is advertised/allowed only with explicit transcript opt-in;
+`offset`/`limit` pagination returns at most 100 segments and verifies actual source
+bytes against the hash. Start/status/cancel return metadata with empty segments,
+so an unconsented grant gets no speech text. There is no approve or publish tool.
+See [MCP setup](services/mcp-server/README.md).
 
 ## Platform status
 
 YouTube connection and supervised publishing code are implemented with controlled-provider
-coverage; live connection/publication acceptance is pending. Other connectors are planned.
+coverage; live connection/publication acceptance is deferred to Phase 9. Other connectors are planned.
 Actual features depend on the official API,
 account permissions, app review, quotas and available access tiers. A YouTube
 catalog does not by itself provide permission or an API to download source footage.
@@ -93,7 +126,7 @@ npm ci
 npm run check
 ```
 
-`check` runs type checks, storage/API/OAuth/publishing/media/Studio tests and a
+`check` runs type checks, storage/API/OAuth/publishing/media/Studio/AI/MCP tests and a
 production frontend/core build. Provider tests use controlled transports and do
 not connect to live Google or publish content. Real-media fixtures require external tools.
 
@@ -118,11 +151,22 @@ Authenticated Blob preview/download is limited to **256 MiB** and playback depen
 on WebView codec support. Without FFprobe, valid imports can be stored without
 probe metadata; editing requires probed duration and available tools.
 
+Local transcription uses an external **whisper.cpp `whisper-cli`** and compatible
+GGML model: `ATRIS_SHARE_WHISPER_CLI` selects the executable (otherwise `whisper-cli`
+on `PATH`); `ATRIS_SHARE_WHISPER_MODEL` must be an absolute local model path.
+FFmpeg extracts 16 kHz mono 16-bit PCM; sources over **two hours** are rejected.
+Language/timestamps and source hashes before/after processing are validated.
+Progress, durable cancellation and lease-fenced restart interruption are implemented;
+interrupted/failed jobs need an explicit new run, with no automatic retry or resume.
+No speech tool/model is bundled or downloaded. See [media engine](packages/media-engine/README.md).
+
 Start by adding a **demo account**, creating a project, then opening **Memory**.
 Select **Account-wide** for account notes or a specific project for project notes;
 these scopes are intentionally separate. Selection and notes survive restarts.
-To connect a real YouTube channel on Windows, configure your Desktop OAuth client
-and use **Accounts**; follow [the connection guide](docs/YOUTUBE.md).
+On Windows, **Accounts → YouTube app setup** saves your Desktop OAuth client ID and
+optional secret in the encrypted OS vault, activates immediately and survives restart.
+Saved values are never read back to the UI or stored in browser storage. Environment
+configuration is a fallback. Follow [the connection guide](docs/YOUTUBE.md) for Phase 9 acceptance.
 Open **Studio** with a project selected to import media, save edits and export.
 
 Data defaults to `%LOCALAPPDATA%\AtrisShare` on Windows, `~/Library/Application
@@ -143,29 +187,37 @@ apps/
   desktop/           React + Vite + Tauri application
 packages/
   domain/            Contracts and runtime workspace schemas
-  ai-bridge/         Planned CLI/runtime integration
+  ai-bridge/         Isolated one-shot OpenCode adapter
   connectors/        Planned official social APIs
-  media-engine/      Managed media, FFprobe inspection and single-clip FFmpeg export
+  media-engine/      Managed media, proxies, kept-range export and local transcription
   storage/           SQLite migrations, repositories, DPAPI vault port
 services/
   local-api/         Authenticated loopback application API
-  mcp-server/        Planned scoped AI tools
+  mcp-server/        Official-SDK stdio tools with scoped launch grants
   worker/            Reserved standalone queue/scheduling service
 docs/                Public architecture, roadmap and platform notes
 ```
 
 Desktop, domain, storage, local API, media engine and preview CLI are implemented.
 YouTube authentication/publishing and lease-backed Studio jobs currently run inside
-the local API. AI bridge, other connectors, MCP and a standalone worker queue remain planned.
+the local API, alongside AI proposal and transcription orchestration. The OpenCode
+bridge and scoped MCP tools are implemented; other connectors and a standalone
+worker queue remain planned.
 
 ## Roadmap and contributions
 
-The next acceptance milestone is the implemented, approval-gated YouTube flow with
-a user-owned OAuth app and authorized live channel. The single-clip editor is an
-initial slice; fuller editing, AI/MCP, automatic clipping, scheduling and additional
-platforms follow in phases.
+Features through Phases 0–4 are implemented within their defined scope: Phase 3's
+limited editor and Phase 4's core features are complete. Automatic clipping,
+scheduling and additional platforms follow in Phases 5–7; Phase 8 covers hardening,
+packaging and feature completion. **Phase 9 is the final live AI/YouTube and
+all-feature end-to-end acceptance gate for Phases 0–8.** Local regressions, builds
+and rendered/native UI checks continue as engineering evidence. Deferred acceptance
+does not mean missing features. No secrets were supplied and no live OAuth or AI
+inference tests were run. Release authorization requires completed Phase 9 and a
+separate explicit request; it is never automatic.
 
 - [Roadmap](docs/ROADMAP.md)
+- [Final acceptance checklist](docs/ACCEPTANCE.md)
 - [Architecture and trust boundaries](docs/ARCHITECTURE.md)
 - [Contributing](CONTRIBUTING.md)
 - [Security reporting](SECURITY.md)
@@ -180,7 +232,8 @@ require AtrisHub credentials or an AtrisAgent checkout.
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE). See [NOTICE](NOTICE).
-Third-party AI tools, platform APIs, media assets and future bundled binaries
-retain their own licenses and terms.
+Third-party AI tools, platform APIs, media assets and bundled runtime dependencies
+retain their own licenses and terms. Runtime staging includes full third-party
+license notices; see [MCP packaging](services/mcp-server/README.md).
 Temporary GPL-enabled FFmpeg builds used for local verification are not distribution
 artifacts; any future bundling requires a separate build/codec license review.

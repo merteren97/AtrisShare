@@ -198,7 +198,7 @@ export function App() {
               : <div className="panel"><Empty icon={<BrainCircuit size={27} />} title={ws.memory.length ? t("noResults") : t("memoryEmpty")} description={t("memoryEmptyDescription")} action={context ? addMemory : addAccount} /></div>}
           </>}
 
-          {page === "accounts" && <Accounts accounts={state.accounts} selectedId={account?.id} vaultAvailable={state.vault.available} loading={ws.loading}
+          {page === "accounts" && <Accounts language={language} accounts={state.accounts} selectedId={account?.id} vaultAvailable={state.vault.available} loading={ws.loading}
             t={t} errorText={errorText} refresh={ws.refresh} choose={accountId => { void ws.chooseContext({ accountId, projectId: null }); }} addDemo={addAccount} />}
 
           {page === "settings" && <>

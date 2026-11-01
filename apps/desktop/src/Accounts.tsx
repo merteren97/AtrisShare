@@ -5,6 +5,7 @@ import type { WorkspaceAccount } from "../../../packages/domain/src/workspace.js
 import type { YouTubeSession, YouTubeSetup } from "../../../packages/domain/src/youtube.js";
 import { ApiError, request } from "./api";
 import type { TextKey } from "./i18n";
+import { YouTubeSetup as YouTubeAppSetup } from "./YouTubeSetup";
 
 const platformNames = { youtube: "YouTube", x: "X", tiktok: "TikTok", linkedin: "LinkedIn" };
 export function accountStatusKey(account: WorkspaceAccount): TextKey {
@@ -16,10 +17,11 @@ export function PlatformIcon({ platform }: { platform: WorkspaceAccount["platfor
 const active = (session: YouTubeSession | null) => session && ["awaiting-browser", "verifying"].includes(session.state);
 function restoreSession(): string | null { try { return sessionStorage.getItem("atris-share-youtube-session"); } catch { return null; } }
 
-export function Accounts({ accounts, selectedId, vaultAvailable, loading, t, errorText, refresh, choose, addDemo }: {
+export function Accounts({ accounts, selectedId, vaultAvailable, loading, t, errorText, refresh, choose, addDemo, language }: {
   accounts: WorkspaceAccount[]; selectedId: string | undefined; vaultAvailable: boolean; loading: boolean;
   t: (key: TextKey) => string; errorText: (error: unknown) => string; refresh: () => Promise<void>;
   choose: (accountId: string) => void; addDemo: React.ReactNode;
+  language: "tr" | "en";
 }) {
   const [setup, setSetup] = useState<YouTubeSetup | null>(null);
   const [session, setSession] = useState<YouTubeSession | null>(null);
@@ -115,6 +117,7 @@ export function Accounts({ accounts, selectedId, vaultAvailable, loading, t, err
   const unavailable = setup && (!setup.configured || !vaultAvailable);
   return <>
     <div className="page-heading"><div><p className="eyebrow">{t("accounts")}</p><h1>{t("accountTitle")}</h1><p>{t("accountDescription")}</p></div>{addDemo}</div>
+    <YouTubeAppSetup language={language} onConfigured={() => { void loadSetup(); }} errorText={errorText} />
     <section className="panel youtube-connect" aria-labelledby="youtube-connect-title">
       <div className="youtube-connect-heading"><PlatformIcon platform="youtube" /><div><h2 id="youtube-connect-title">{t("connectYouTube")}</h2><p>{t("youtubeDescription")}</p></div><span className="badge positive">OAuth · PKCE</span></div>
       {!setup ? <div className="section-note">{t("youtubeSetupLoading")} <button className="text-button" disabled={busy} onClick={() => { void loadSetup(); }}>{t("retry")}</button></div>

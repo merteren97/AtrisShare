@@ -1,0 +1,16 @@
+.transcription-panel { border-block: 1px solid var(--line); padding-block: 12px; margin-block: 16px; min-width: 0; overflow-wrap: anywhere; }
+.transcription-setup { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 12px; }
+.transcription-setup > div { display: grid; gap: 5px; min-width: 0; }
+.transcription-setup strong { font-size: 11px; font-weight: 500; }
+.transcription-setup span, .transcription-tools { color: var(--muted); font-size: 10px; line-height: 1.8; }
+.transcription-tools { list-style: none; padding: 0; margin-block: 8px 12px; }
+.transcription-status { display: flex; align-items: center; gap: 6px; font-size: 11px; line-height: 1.8; margin-top: 12px; }
+.transcription-panel .button { white-space: normal; min-width: 0; }
+.transcription-panel .studio-progress { min-width: 0; }
+.transcription-panel progress { min-width: 0; width: 100%; }
+.transcription-segments > ol { list-style: none; padding: 0; margin: 0; max-height: 240px; overflow-y: auto; scrollbar-width: thin; }
+.transcription-segments li { padding-block: 8px; border-bottom: 1px solid var(--line); min-width: 0; }
+.transcription-time { display: block; color: var(--muted); font-size: 9px; font-variant-numeric: tabular-nums; line-height: 1.8; }
+.transcription-segments li p { font-size: 11px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; margin: 3px 0 0; }
+.transcription-panel :is(button, summary):focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 3px; }
+.transcription-panel .studio-progress > span { flex: 0 0 auto; white-space: nowrap; }

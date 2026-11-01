@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { Readable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
-import { editSchema, mediaProbeSchema } from "../dist/packages/domain/src/media.js";
+import { editSchema, mediaProbeSchema, segmentSchema } from "../dist/packages/domain/src/media.js";
 import { MediaEngine } from "../dist/packages/media-engine/src/index.js";
 
 // Real 64x48 VP8 WebM recorded from a solid-colour Chromium canvas with MediaRecorder.
@@ -73,6 +73,25 @@ test("media schemas reject nonfinite probes, reversed trims and unsafe edit valu
   }
 });
 
+test("segments are optional, bounded, chronological source ranges within the unchanged envelope", () => {
+  const segments = [{ inSeconds: 0.5, outSeconds: 1 }, { inSeconds: 2, outSeconds: 2.5 }];
+  assert.deepEqual(editSchema.parse({ ...EDIT, segments }), { ...EDIT, segments });
+  assert.deepEqual(editSchema.parse({ ...EDIT, segments: undefined }).segments, undefined);
+  assert.equal(editSchema.safeParse({ ...EDIT, inSeconds: 0, outSeconds: 0.001 }).success, true);
+  assert.equal(segmentSchema.safeParse({ inSeconds: 0, outSeconds: 0.001 }).success, true);
+  assert.equal(editSchema.safeParse({ ...EDIT, segments: [{ inSeconds: 0.5, outSeconds: 1 }, { inSeconds: 1, outSeconds: 2.5 }] }).success, true);
+  const maximum = Array.from({ length: 32 }, (_, i) => ({ inSeconds: i / 32, outSeconds: (i + 1) / 32 }));
+  assert.equal(editSchema.safeParse({ ...EDIT, inSeconds: 0, outSeconds: 1, segments: maximum }).success, true);
+  for (const invalidSegments of [[], [...maximum, { inSeconds: 1, outSeconds: 1.01 }],
+    [{ inSeconds: 0, outSeconds: 1 }], [{ inSeconds: 1, outSeconds: 3 }],
+    [{ inSeconds: 1, outSeconds: 1 }], [{ inSeconds: 2, outSeconds: 1 }],
+    [{ inSeconds: NaN, outSeconds: 1 }], [{ inSeconds: 1, outSeconds: Infinity }],
+    [{ inSeconds: 0.5, outSeconds: 1.5 }, { inSeconds: 1, outSeconds: 2 }],
+    [...segments].reverse(), [{ inSeconds: 0.5, outSeconds: 1, sourceId: randomUUID() }]]) {
+    assert.equal(editSchema.safeParse({ ...EDIT, segments: invalidSegments }).success, false, JSON.stringify(invalidSegments));
+  }
+});
+
 test("real WebM import hashes streamed bytes, uses content MIME and a managed UUID path", async t => {
   const { engine, directory } = await fixture(t);
   const id = randomUUID();
@@ -101,10 +120,13 @@ test("strict UUIDs reject traversal, nil IDs, alternate encodings and source ove
     await assert.rejects(engine.remove(id), /invalid_media_id/u);
     await assert.rejects(engine.render(id, randomUUID(), EDIT, () => {}, new AbortController().signal), /invalid_media_id/u);
     await assert.rejects(engine.render(randomUUID(), id, EDIT, () => {}, new AbortController().signal), /invalid_media_id/u);
+    await assert.rejects(engine.proxy(id, randomUUID(), () => {}, new AbortController().signal), /invalid_media_id/u);
+    await assert.rejects(engine.proxy(randomUUID(), id, () => {}, new AbortController().signal), /invalid_media_id/u);
   }
   const id = randomUUID();
   await engine.import(id, Readable.from([WEBM]), "source.webm");
   await assert.rejects(engine.render(id, id.toUpperCase(), EDIT, () => {}, new AbortController().signal), /media_source_is_immutable/u);
+  await assert.rejects(engine.proxy(id, id.toUpperCase(), () => {}, new AbortController().signal), /media_source_is_immutable/u);
   assert.equal(await engine.verify(id, SHA), true);
 });
 
@@ -191,6 +213,7 @@ test("missing tools are unavailable, imports remain real, inspect/render never f
   assert.equal(source.probe, null);
   await assert.rejects(engine.inspect(source.id), /media_tool_unavailable: ffprobe/u);
   await assert.rejects(engine.render(source.id, randomUUID(), EDIT, () => {}, new AbortController().signal), /media_tool_unavailable: ffprobe/u);
+  await assert.rejects(engine.proxy(source.id, randomUUID(), () => {}, new AbortController().signal), /media_tool_unavailable: ffprobe/u);
   await noPartials(directory);
 });
 
@@ -234,7 +257,7 @@ test("probe process has a sanitized environment and closed input protocols; rota
   assert.equal(args[args.indexOf("-protocol_whitelist") + 1], "file,pipe");
   assert.equal(args[args.indexOf("-f") + 1], "matroska");
   // Select only stream side data; FFprobe 4.x lacks the stream_side_data child alias.
-  assert.equal(args[args.indexOf("-show_entries") + 1], "format=duration:stream=codec_type,width,height,duration:stream_tags=rotate:stream_side_data_list");
+  assert.equal(args[args.indexOf("-show_entries") + 1], "format=duration,start_time:stream=codec_type,width,height,duration:stream_tags=rotate:stream_side_data_list");
   const displayEngine = new MediaEngine(directory, { ...injectedPaths, spawn: (_tool, _argv, options) => {
     return nodeSpawn(process.execPath, ["-e", `console.log(${JSON.stringify(JSON.stringify({ format: { duration: "2" }, streams: [
       { codec_type: "video", width: 320, height: 240, side_data_list: [{ rotation: -90 }] }
@@ -344,8 +367,55 @@ test("render progress is monotonic, cancellation kills/reaps child and cleans pa
   await noPartials(directory);
 });
 
+test("segmented render and proxy use isolated bounded encodes, duration-based progress and reap on cancel", async t => {
+  for (const mode of ["segments", "proxy"]) {
+    const records = [];
+    const { engine, directory } = await fixture(t, { ...injectedPaths, spawn: injected(args => {
+      assert.equal(args[args.indexOf("-protocol_whitelist") + 1], "file,pipe");
+      assert.equal(args[args.indexOf("-c:v") + 1], "libx264");
+      assert.equal(args[args.indexOf("-c:a") + 1], "aac");
+      assert.equal(args[args.indexOf("-fs") + 1], String(2 * 1024 ** 3 + 1));
+      if (mode === "segments") {
+        const graph = args[args.indexOf("-filter_complex") + 1];
+        assert.match(graph, /aresample=async=1:first_pts=0,apad,atrim=end=3.5,asplit=2/u);
+        assert.match(graph, /trim=start=0.5:end=1.5,setpts=PTS-0.5\/TB/u);
+        assert.match(graph, /atrim=start=2.5:end=3.5,asetpts=PTS-2.5\/TB/u);
+        assert.match(graph, /concat=n=2:v=1:a=1/u);
+        assert.match(graph, /crop=126:224:.*drawtext=textfile=caption.txt:expansion=none/u);
+        assert.match(graph, /volume=-6dB/u);
+        assert.equal(args[args.indexOf("-t") + 1], "2");
+        assert.ok(!args.includes("-ss"), "segment times refer to the original source");
+      } else {
+        assert.equal(args[args.indexOf("-vf") + 1], "scale=320:240");
+        assert.ok(!args.includes("-ss") && !args.includes("-t") && !args.includes("-af"));
+      }
+      return `require('node:fs').writeFileSync(${JSON.stringify(args.at(-1))},'partial');process.stdout.write('out_time_us=1000000\\nout_time_us=500000\\n');setInterval(()=>{},1000);`;
+    }, records) });
+    const source = await engine.import(randomUUID(), Readable.from([WEBM]), "source.webm");
+    const outputId = randomUUID(), controller = new AbortController(), progress = [];
+    const observer = value => { progress.push(value); if (value > 0) controller.abort(); };
+    await assert.rejects(mode === "proxy" ? engine.proxy(source.id, outputId, observer, controller.signal)
+      : engine.render(source.id, outputId, { ...EDIT, outSeconds: 3.5, caption: "safe text", segments: [
+        { inSeconds: 0.5, outSeconds: 1.5 }, { inSeconds: 2.5, outSeconds: 3.5 }
+      ] }, observer, controller.signal), { name: "AbortError" });
+    assert.deepEqual(progress, [0, mode === "proxy" ? 0.25 : 0.5]);
+    const child = records.find(record => record.tool === "ffmpeg").child;
+    assert.equal(child.killed, true);
+    assert.ok(child.exitCode !== null || child.signalCode !== null);
+    await assert.rejects(readFile(engine.path(outputId)), { code: "ENOENT" });
+    assert.equal(await engine.verify(source.id, SHA), true);
+    await noPartials(directory);
+    await assert.rejects(engine.proxy(source.id, randomUUID(), () => {}, AbortSignal.abort()), { name: "AbortError" });
+  }
+});
+
 async function realFfmpeg(args, options = {}) {
-  const child = nodeSpawn(process.env.ATRIS_SHARE_FFMPEG ?? "ffmpeg", ["-hide_banner", "-nostdin", "-loglevel", "error", ...args],
+  return realMediaTool("ffmpeg", ["-hide_banner", "-nostdin", ...args], options);
+}
+
+async function realMediaTool(tool, args, options = {}) {
+  const executable = tool === "ffmpeg" ? process.env.ATRIS_SHARE_FFMPEG : process.env.ATRIS_SHARE_FFPROBE;
+  const child = nodeSpawn(executable ?? tool, ["-v", "error", ...args],
     { ...options, shell: false, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   const chunks = [], errors = [];
   child.stdout.on("data", chunk => chunks.push(chunk));
@@ -462,4 +532,249 @@ test("real FFmpeg/FFprobe fixture: trim, square/vertical crop, caption, gain, pr
   }
   assert.deepEqual(await readFile(engine.path(source.id)), sourceBytes);
   await noPartials(directory);
+});
+
+async function markerSource(engine, directory, size = "320x240") {
+  const path = join(directory, `markers-${size}.mp4`);
+  // Simultaneous white flashes + 1kHz beeps at .8s and 2.8s. A different
+  // flash/beep in the discarded middle proves we removed content, not just time.
+  const active = "between(t,0.8,0.92)+between(t,1.8,1.92)+between(t,2.8,2.92)";
+  await realFfmpeg(["-f", "lavfi", "-i", `color=c=black:size=${size}:rate=50`,
+    "-f", "lavfi", "-i", `aevalsrc='if(${active},0.5*sin(2*PI*1000*t),0)':s=48000`,
+    "-vf", `drawbox=c=white:t=fill:enable='${active}'`, "-t", "4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-threads", "2",
+    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-n", path]);
+  return engine.import(randomUUID(), Readable.from([await readFile(path)]), "markers.mp4");
+}
+
+function onsets(values, threshold, step) {
+  const result = [];
+  for (let i = 0; i < values.length; i++) {
+    if (values[i] > threshold && (i === 0 || values[i - 1] <= threshold)) result.push(i * step);
+  }
+  return result;
+}
+
+async function avMarkers(path) {
+  const timing = JSON.parse(await realMediaTool("ffprobe", ["-select_streams", "v:0", "-show_entries",
+    "format=start_time:frame=best_effort_timestamp_time", "-of", "json", path]));
+  const origin = Number(timing.format.start_time);
+  const frames = await realFfmpeg(["-i", path, "-an", "-vf", "scale=1:1,format=gray", "-vsync", "0", "-threads", "1", "-f", "rawvideo", "pipe:1"]);
+  assert.equal(frames.length, timing.frames.length, "decoded pixels correspond to probed video timestamps");
+  // Raw PCM alone drops packet timestamps. Materialize the shared-clock leading
+  // gap when decoding, so delayed audio cannot masquerade as time-zero audio.
+  const pcm = await realFfmpeg(["-i", path, "-vn", "-af", "aresample=async=1:first_pts=0", "-ac", "1", "-ar", "48000", "-f", "f32le", "pipe:1"]);
+  const rms = [];
+  for (let at = 0; at + 480 * 4 <= pcm.length; at += 480 * 4) {
+    let energy = 0;
+    for (let i = 0; i < 480; i++) energy += pcm.readFloatLE(at + i * 4) ** 2;
+    rms.push(Math.sqrt(energy / 480));
+  }
+  const video = onsets(frames, 128, 1).map(i => Number(timing.frames[i].best_effort_timestamp_time) - origin);
+  return { video, audio: onsets(rms, 0.06, 0.01), rms, audioDuration: pcm.length / 4 / 48000,
+    videoDuration: Number(timing.frames.at(-1).best_effort_timestamp_time) - origin + 1 / 50 };
+}
+
+function assertMarkers(actual, expected) {
+  assert.equal(actual.video.length, expected.length, JSON.stringify(actual.video));
+  assert.equal(actual.audio.length, expected.length, JSON.stringify(actual.audio));
+  for (const [i, time] of expected.entries()) {
+    assert.ok(Math.abs(actual.video[i] - time) <= 0.041, `video marker ${i}: ${actual.video[i]} vs ${time}`);
+    assert.ok(Math.abs(actual.audio[i] - time) <= 0.031, `audio marker ${i}: ${actual.audio[i]} vs ${time}`);
+    assert.ok(Math.abs(actual.video[i] - actual.audio[i]) <= 0.041, `A/V sync at marker ${i}`);
+  }
+}
+
+test("real segmented render removes the middle: 2s concat, decoded A/V markers, gain and immutable source", async t => {
+  const { directory } = await fixture(t);
+  const engine = new MediaEngine(directory);
+  if (!(await engine.status()).available) { t.skip("External FFmpeg/FFprobe unavailable"); return; }
+  const source = await markerSource(engine, directory);
+  const original = await avMarkers(engine.path(source.id));
+  assertMarkers(original, [0.8, 1.8, 2.8]);
+  const segments = [{ inSeconds: 0.5, outSeconds: 1.5 }, { inSeconds: 2.5, outSeconds: 3.5 }];
+  const edit = { ...EDIT, outSeconds: 3.5, crop: "square", segments };
+  const progress = [];
+  const output = await engine.render(source.id, randomUUID(), edit, p => progress.push(p), new AbortController().signal);
+  assert.ok(Math.abs(output.probe.duration - 2) < 0.08, JSON.stringify(output.probe));
+  assert.deepEqual({ ...output.probe, duration: 2 }, { duration: 2, width: 240, height: 240, hasAudio: true });
+  const actual = await avMarkers(engine.path(output.id));
+  assertMarkers(actual, [0.3, 1.3]);
+  assert.ok(Math.abs(actual.audioDuration - 2) < 0.05);
+  assert.ok(Math.abs(actual.videoDuration - 2) < 0.05);
+  const ratio = actual.rms[35] / original.rms[85];
+  assert.ok(Math.abs(ratio - 10 ** (-6 / 20)) < 0.06, `gain amplitude ratio: ${ratio}`);
+  assert.equal(progress[0], 0); assert.equal(progress.at(-1), 1);
+  assert.ok(progress.every((value, i) => i === 0 || value > progress[i - 1]));
+  assert.deepEqual(edit.segments, segments, "render does not rewrite source ranges or envelope");
+  assert.equal(edit.inSeconds, 0.5); assert.equal(edit.outSeconds, 3.5);
+  assert.equal(await engine.verify(source.id, source.sha256), true);
+  assert.equal(await engine.verify(output.id, output.sha256), true);
+  // Atomic/exclusive output publication also applies to multi-segment exports.
+  await assert.rejects(engine.render(source.id, output.id, edit, () => {}, new AbortController().signal), { code: "EEXIST" });
+  assert.equal(await engine.verify(output.id, output.sha256), true);
+  // Same graph for video-only, including its one-segment form and static caption.
+  const silentPath = join(directory, "silent.mp4");
+  await realFfmpeg(["-i", engine.path(source.id), "-an", "-c:v", "copy", "-n", silentPath]);
+  const silent = await engine.import(randomUUID(), Readable.from([await readFile(silentPath)]), "silent.mp4");
+  for (const ranges of [segments, [segments[0]]]) {
+    const result = await engine.render(silent.id, randomUUID(), { ...edit, crop: "vertical", caption: "Literal %{pts} safe wrapped caption", segments: ranges },
+      () => {}, new AbortController().signal);
+    assert.deepEqual({ ...result.probe, duration: ranges.length }, { duration: ranges.length, width: 126, height: 224, hasAudio: false });
+    assert.ok(Math.abs(result.probe.duration - ranges.length) < 0.08);
+    const pixels = await realFfmpeg(["-ss", "0.1", "-i", engine.path(result.id), "-frames:v", "1", "-vf", "format=gray", "-f", "rawvideo", "pipe:1"]);
+    assert.ok(inkBounds(pixels, 126, 224).count > 0, "caption also appears on segmented exports");
+  }
+  await noPartials(directory);
+  t.diagnostic(`Removed middle marker; decoded video onsets=${actual.video}, audio onsets=${actual.audio}, gain ratio=${ratio.toFixed(3)}`);
+});
+
+test("real delayed audio keeps its source clock through segments and proxy, including nonzero input start_time", async t => {
+  const { directory } = await fixture(t);
+  const engine = new MediaEngine(directory);
+  if (!(await engine.status()).available) { t.skip("External FFmpeg/FFprobe unavailable"); return; }
+  const path = join(directory, "delayed-audio.mp4");
+  const videoActive = "between(t,1,1.12)+between(t,1.8,1.92)+between(t,2.8,2.92)";
+  const audioActive = "between(t,0,0.12)+between(t,0.8,0.92)+between(t,1.8,1.92)";
+  // Actual absent audio packets for the first second, not an encoded silent
+  // prefix. Audio ends at 3s while video runs to 4s, exercising tail padding too.
+  await realFfmpeg(["-f", "lavfi", "-i", "color=c=black:size=320x240:rate=50:duration=4",
+    "-itsoffset", "1", "-f", "lavfi", "-i", `aevalsrc='if(${audioActive},0.5*sin(2*PI*1000*t),0)':s=48000:d=2`,
+    "-vf", `drawbox=c=white:t=fill:enable='${videoActive}'`, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-threads", "2",
+    "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-n", path]);
+  for (const origin of [0, 5]) await t.test(`input start_time=${origin}`, async t => {
+    const input = origin === 0 ? path : join(directory, "delayed-audio-shifted.mp4");
+    if (origin) await realFfmpeg(["-i", path, "-map", "0", "-c", "copy", "-output_ts_offset", String(origin), "-n", input]);
+    const timing = JSON.parse(await realMediaTool("ffprobe", ["-show_entries",
+      "format=start_time,duration:stream=codec_type,start_time,duration", "-of", "json", input]));
+    assert.ok(Math.abs(Number(timing.format.start_time) - origin) < 0.001, JSON.stringify(timing));
+    const audioStart = Number(timing.streams.find(stream => stream.codec_type === "audio").start_time) - origin;
+    assert.ok(audioStart > 0.95 && audioStart <= 1.01, `fixture audio really starts late: ${audioStart}`);
+    t.diagnostic(`Source timing=${JSON.stringify(timing)}`);
+    const source = await engine.import(randomUUID(), Readable.from([await readFile(input)]), "delayed.mp4");
+    assert.ok(Math.abs(source.probe.duration - 4) < 0.01, "source duration excludes the container timestamp origin");
+    assert.deepEqual(await engine.inspect(source.id), source.probe);
+    await assert.rejects(engine.render(source.id, randomUUID(), { ...EDIT, inSeconds: 0, outSeconds: 4.5,
+      segments: [{ inSeconds: 0, outSeconds: 4.5 }] }, () => {}, new AbortController().signal), /media_trim_out_of_bounds/u);
+    assertMarkers(await avMarkers(engine.path(source.id)), [1, 1.8, 2.8]);
+    const cases = [
+      { name: "spans source start", segments: [[0, 2]], markers: [1, 1.8], silence: [[0, 0.9]] },
+      { name: "cut before audio onset", segments: [[0.5, 2]], markers: [0.5, 1.3], silence: [[0, 0.4]] },
+      { name: "cut after audio onset", segments: [[1.5, 3.5]], markers: [0.3, 1.3], silence: [[1.6, 1.95]] },
+      { name: "multiple ranges with leading and trailing silence", segments: [[0, 0.5], [0.7, 1.4], [2.5, 3.5], [3.5, 4]],
+        markers: [0.8, 1.5], silence: [[0, 0.7], [1.8, 2.65]] },
+      { name: "entirely before audio onset", segments: [[0, 0.5]], markers: [], silence: [[0, 0.45]] },
+      { name: "entirely after audio end", segments: [[3.5, 4]], markers: [], silence: [[0, 0.45]] }
+    ];
+    for (const { name, segments: ranges, markers, silence } of cases) {
+      const segments = ranges.map(([inSeconds, outSeconds]) => ({ inSeconds, outSeconds }));
+      const duration = ranges.reduce((sum, [start, end]) => sum + end - start, 0);
+      const output = await engine.render(source.id, randomUUID(), { ...EDIT, inSeconds: 0, outSeconds: 4, crop: "original", gainDb: 0, segments },
+        () => {}, new AbortController().signal);
+      const actual = await avMarkers(engine.path(output.id));
+      assertMarkers(actual, markers);
+      for (const [start, end] of silence) {
+        assert.ok(actual.rms.slice(Math.ceil(start * 100), Math.floor(end * 100)).every(value => value < 0.005), `${name}: gap must be silence`);
+      }
+      assert.ok(Math.abs(output.probe.duration - duration) < 0.05, `${name}: container duration ${output.probe.duration}`);
+      assert.ok(Math.abs(actual.audioDuration - duration) < 0.05, `${name}: decoded audio duration ${actual.audioDuration}`);
+      assert.ok(Math.abs(actual.videoDuration - duration) < 0.025, `${name}: video duration ${actual.videoDuration}`);
+      assert.equal(await engine.verify(output.id, output.sha256), true);
+      t.diagnostic(`${name}: video=${actual.video}, audio=${actual.audio}, duration=${output.probe.duration}`);
+    }
+    const proxy = await engine.proxy(source.id, randomUUID(), () => {}, new AbortController().signal);
+    const actual = await avMarkers(engine.path(proxy.id));
+    assertMarkers(actual, [1, 1.8, 2.8]);
+    assert.ok(actual.rms.slice(0, 90).every(value => value < 0.005), "proxy preserves leading audio gap on source clock");
+    assert.ok(Math.abs(proxy.probe.duration - 4) < 0.05);
+    assert.ok(Math.abs(actual.videoDuration - 4) < 0.025);
+    assert.equal(await engine.verify(source.id, source.sha256), true);
+    assert.equal(await engine.verify(proxy.id, proxy.sha256), true);
+    await noPartials(directory);
+    t.diagnostic(`Proxy: video=${actual.video}, audio=${actual.audio}, duration=${proxy.probe.duration}`);
+  });
+});
+
+test("real proxy preserves full source timing/A/V markers and aspect, fits 1280x720, honors rotation", async t => {
+  const { directory } = await fixture(t);
+  const engine = new MediaEngine(directory);
+  if (!(await engine.status()).available) { t.skip("External FFmpeg/FFprobe unavailable"); return; }
+  const source = await markerSource(engine, directory, "1600x900");
+  const progress = [];
+  const proxy = await engine.proxy(source.id, randomUUID(), p => progress.push(p), new AbortController().signal);
+  assert.deepEqual({ ...proxy.probe, duration: 4 }, { duration: 4, width: 1280, height: 720, hasAudio: true });
+  assert.ok(Math.abs(proxy.probe.duration - source.probe.duration) < 0.05);
+  const actual = await avMarkers(engine.path(proxy.id));
+  assertMarkers(actual, [0.8, 1.8, 2.8]);
+  assert.ok(Math.abs(actual.audioDuration - actual.videoDuration) < 0.05);
+  assert.equal(proxy.mimeType, "video/mp4");
+  assert.equal(proxy.bytes, (await readFile(engine.path(proxy.id))).length);
+  assert.equal(await engine.verify(proxy.id, proxy.sha256), true);
+  assert.equal(await engine.verify(source.id, source.sha256), true);
+  assert.equal(progress[0], 0); assert.equal(progress.at(-1), 1);
+  assert.ok(progress.every((value, i) => i === 0 || value > progress[i - 1]));
+  const rotatedPath = join(directory, "rotated.mp4");
+  await realFfmpeg(["-display_rotation", "90", "-i", engine.path(source.id), "-c", "copy", "-an", "-n", rotatedPath]);
+  const rotated = await engine.import(randomUUID(), Readable.from([await readFile(rotatedPath)]), "rotated.mp4");
+  assert.equal(rotated.probe.width, 900); assert.equal(rotated.probe.height, 1600);
+  const portrait = await engine.proxy(rotated.id, randomUUID(), () => { throw new Error("observer ignored"); }, new AbortController().signal);
+  assert.deepEqual({ ...portrait.probe, duration: 4 }, { duration: 4, width: 404, height: 720, hasAudio: false });
+  assert.ok(Math.abs(portrait.probe.width / portrait.probe.height - 9 / 16) < 0.002);
+  assert.ok(Math.abs(portrait.probe.duration - 4) < 0.05);
+  assert.equal(await engine.verify(rotated.id, rotated.sha256), true);
+  const anamorphicPath = join(directory, "anamorphic.mp4");
+  await realFfmpeg(["-f", "lavfi", "-i", "color=size=300x200:rate=10", "-vf", "setsar=4/3", "-t", "0.5",
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-threads", "2", "-n", anamorphicPath]);
+  const anamorphic = await engine.import(randomUUID(), Readable.from([await readFile(anamorphicPath)]), "anamorphic.mp4");
+  const corrected = await engine.proxy(anamorphic.id, randomUUID(), () => {}, new AbortController().signal);
+  const display = await realFfmpeg(["-i", engine.path(corrected.id), "-frames:v", "1", "-vf", "scale=iw*sar:ih,setsar=1,format=gray", "-f", "rawvideo", "pipe:1"]);
+  assert.equal(display.length, 400 * 200, "proxy retains 2:1 display aspect, including non-square source pixels");
+  // Cancel actual encoders after their first structured output, then prove that
+  // child close (not just kill request) and workspace cleanup preceded rejection.
+  for (const mode of ["proxy", "segments"]) {
+    const controller = new AbortController();
+    let child;
+    const cancelling = new MediaEngine(directory, { spawn: (tool, args, options) => {
+      const process = nodeSpawn(tool, args, options);
+      if (args.includes("-progress")) {
+        child = process;
+        child.stdout.once("data", () => controller.abort());
+      }
+      return process;
+    } });
+    const outputId = randomUUID(), observed = [];
+    await assert.rejects(mode === "proxy" ? cancelling.proxy(source.id, outputId, p => observed.push(p), controller.signal)
+      : cancelling.render(source.id, outputId, { ...EDIT, outSeconds: 3.5, segments: [
+        { inSeconds: 0.5, outSeconds: 1.5 }, { inSeconds: 2.5, outSeconds: 3.5 }
+      ] }, p => observed.push(p), controller.signal), { name: "AbortError" });
+    assert.equal(child.killed, true);
+    assert.ok(child.exitCode !== null || child.signalCode !== null);
+    assert.ok(!observed.includes(1));
+    await assert.rejects(readFile(cancelling.path(outputId)), { code: "ENOENT" });
+    await noPartials(directory);
+    assert.equal(await engine.verify(source.id, source.sha256), true);
+  }
+  // Validate actual output, rather than trusting encoder exit 0 or input probe.
+  for (const mode of ["short", "wrong-codec"]) {
+    const invalid = new MediaEngine(directory, { spawn: (tool, args, options) => {
+      if (args.includes("-progress")) {
+        args = [...args];
+        if (mode === "short") args.splice(-1, 0, "-t", "0.25");
+        else args[args.indexOf("-c:v") + 1] = "mpeg4";
+      }
+      return nodeSpawn(tool, args, options);
+    } });
+    const outputId = randomUUID();
+    await assert.rejects(invalid.proxy(source.id, outputId, () => {}, new AbortController().signal),
+      mode === "short" ? /media_render_incomplete/u : /media_output_incompatible/u);
+    await assert.rejects(readFile(invalid.path(outputId)), { code: "ENOENT" });
+    await noPartials(directory);
+  }
+  // Enforce the existing media-byte limit on actual encoded bytes, before publish.
+  const small = await engine.import(randomUUID(), Readable.from([WEBM]), "small.webm");
+  const limited = new MediaEngine(directory, { maxImportBytes: WEBM.length });
+  const limitedId = randomUUID();
+  await assert.rejects(limited.proxy(small.id, limitedId, () => {}, new AbortController().signal), /media_size_limit|invalid_media_container|media_render_incomplete/u);
+  await assert.rejects(readFile(limited.path(limitedId)), { code: "ENOENT" });
+  await noPartials(directory);
+  t.diagnostic(`Proxy decoded video onsets=${actual.video}, audio onsets=${actual.audio}; rotated dimensions=${portrait.probe.width}x${portrait.probe.height}`);
 });

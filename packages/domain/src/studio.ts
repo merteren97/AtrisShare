@@ -14,6 +14,9 @@ export type PublicationInput = z.infer<typeof publicationInputSchema>;
 export interface StudioArtifact {
   id: string; accountId: string; projectId: string; filename: string; sha256: string; bytes: number;
   mimeType: string; probe: MediaProbe | null; sourceId: string | null; channelVideoId: string | null; createdAt: string;
+  kind?: "source" | "export" | "proxy" | "preview";
+  proxyId?: string | null;
+  sourceSha256?: string;
 }
 export interface PublicationPayload {
   version: 1; accountId: string; projectId: string; destinationId: string; artifactId: string; sha256: string;
@@ -29,4 +32,5 @@ export interface StudioTimeline { revision: number; cursor: number; edits: Media
 export interface StudioRender {
   id: string; sourceId: string; state: "running" | "succeeded" | "failed" | "cancelled";
   progress: number; error: string | null; artifactId: string | null;
+  kind?: "export" | "proxy" | "preview";
 }

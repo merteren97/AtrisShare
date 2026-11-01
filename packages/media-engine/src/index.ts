@@ -333,21 +333,29 @@ export class MediaEngine {
     return ["-protocol_whitelist", "file,pipe", "-format_whitelist", "mov,matroska,webm", "-f", container === "mp4" ? "mov" : "matroska",
       ...(container === "mp4" ? ["-enable_drefs", "0", "-use_absolute_path", "0"] : [])];
   }
-  private async probeFile(path: string, container: Container, signal?: AbortSignal): Promise<MediaProbe> {
+  private async probeFile(path: string, container: Container, signal?: AbortSignal, compatible = false): Promise<MediaProbe> {
     const output = await this.run("ffprobe", ["-v", "error", "-max_alloc", "268435456", ...this.inputArgs(container),
       "-probesize", "8388608", "-analyzeduration", "10000000", "-show_entries",
-      "format=duration:stream=codec_type,width,height,duration:stream_tags=rotate:stream_side_data_list", "-of", "json", path],
+      `format=duration,start_time:stream=codec_type,width,height,duration${compatible ? ",codec_name,pix_fmt" : ""}:stream_tags=rotate:stream_side_data_list`, "-of", "json", path],
     { ...(signal ? { signal } : {}), timeout: 30000 });
-    const result = JSON.parse(output) as { format?: { duration?: string }; streams?: {
-      codec_type?: string; width?: number; height?: number; duration?: string;
+    const result = JSON.parse(output) as { format?: { duration?: string; start_time?: string }; streams?: {
+      codec_type?: string; codec_name?: string; pix_fmt?: string; width?: number; height?: number; duration?: string;
       tags?: { rotate?: string }; side_data_list?: { rotation?: number }[];
     }[] };
     if (!Array.isArray(result.streams)) throw new Error("invalid_media_probe");
     const video = result.streams.find(stream => stream.codec_type === "video");
     if (!video) throw new Error("media_video_required");
+    if (compatible && (video.codec_name !== "h264" || video.pix_fmt !== "yuv420p"
+      || result.streams.some(stream => stream.codec_type === "audio" && stream.codec_name !== "aac"))) {
+      throw new Error("media_output_incompatible");
+    }
     const rotation = Number(video.side_data_list?.find(item => item.rotation !== undefined)?.rotation ?? video.tags?.rotate ?? 0);
     const rotated = Math.abs(rotation % 180) === 90;
-    return mediaProbeSchema.parse({ duration: Number(result.format?.duration ?? video.duration),
+    // The supported containers report their timeline end as format duration,
+    // including any initial timestamp offset. Match FFmpeg's default input clock.
+    const duration = result.format?.duration !== undefined
+      ? Number(result.format.duration) - Number(result.format.start_time ?? 0) : Number(video.duration);
+    return mediaProbeSchema.parse({ duration,
       width: rotated ? video.height : video.width, height: rotated ? video.width : video.height,
       hasAudio: result.streams.some(stream => stream.codec_type === "audio") });
   }
@@ -385,10 +393,11 @@ export class MediaEngine {
     }
   }
 
-  async verify(id: string, sha256: string): Promise<boolean> {
+  async verify(id: string, sha256: string, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted();
     mediaId(id);
     if (!/^[0-9a-f]{64}$/iu.test(sha256)) return false;
-    try { return (await this.digest(await this.existing(id))).sha256 === sha256.toLowerCase(); }
+    try { return (await this.digest(await this.existing(id), signal)).sha256 === sha256.toLowerCase(); }
     catch (error) { if (isMissing(error)) return false; throw error; }
   }
   private async digest(path: string, signal?: AbortSignal): Promise<{ sha256: string; bytes: number }> {
@@ -401,9 +410,10 @@ export class MediaEngine {
     } }), { ...(signal ? { signal } : {}) });
     return { sha256: hash.digest("hex"), bytes };
   }
-  async inspect(id: string): Promise<MediaProbe> {
+  async inspect(id: string, signal?: AbortSignal): Promise<MediaProbe> {
+    signal?.throwIfAborted();
     const path = await this.existing(id);
-    return this.probeFile(path, await containerOf(path));
+    return this.probeFile(path, await containerOf(path, signal), signal);
   }
 
   async render(sourceId: string, outputId: string, edit: MediaEdit, onProgress: (p: number) => void, signal: AbortSignal): Promise<MediaResult> {
@@ -423,7 +433,66 @@ export class MediaEngine {
     }
     if (width < 2 || height < 2) throw new Error("media_dimensions_too_small");
     const caption = edit.caption ? captionLayout(edit.caption, width, height) : undefined;
-    const workspace = await mkdtemp(join(this.directory, ".render-"));
+    const segments = edit.segments;
+    const duration = segments ? segments.reduce((sum, segment) => sum + segment.outSeconds - segment.inSeconds, 0)
+      : edit.outSeconds - edit.inSeconds;
+    const filters = [`crop=${width}:${height}:(iw-ow)/2:(ih-oh)/2`, "setsar=1"];
+    if (caption) {
+      filters.push(`drawtext=textfile=caption.txt:expansion=none:fontcolor=white:fontsize=${caption.fontSize}:line_spacing=${caption.spacing}:box=1:boxcolor=black@0.6:boxborderw=${caption.border}:x=(w-text_w)/2:y=h-text_h-${caption.margin + caption.border}`);
+    }
+    let args: string[];
+    if (segments) {
+      // FFmpeg removes the input container's start_time by default (no -copyts),
+      // leaving both streams on the same source-relative clock. Fill absent audio
+      // before splitting, including ranges entirely before/after its packets.
+      // Bound tail padding to the envelope; each cut then subtracts the same origin
+      // for A/V rather than independently moving its first frame/sample to zero.
+      const graph: string[] = [];
+      if (probe.hasAudio) graph.push(`[0:a:0]aresample=async=1:first_pts=0,apad,atrim=end=${edit.outSeconds}${segments.length > 1
+        ? `,asplit=${segments.length}${segments.map((_, i) => `[a${i}]`).join("")}` : "[a0]"}`);
+      if (segments.length > 1) {
+        graph.push(`[0:v:0]split=${segments.length}${segments.map((_, i) => `[v${i}]`).join("")}`);
+      }
+      for (const [i, segment] of segments.entries()) {
+        graph.push(`${segments.length > 1 ? `[v${i}]` : "[0:v:0]"}trim=start=${segment.inSeconds}:end=${segment.outSeconds},setpts=PTS-${segment.inSeconds}/TB[vt${i}]`);
+        if (probe.hasAudio) graph.push(`[a${i}]atrim=start=${segment.inSeconds}:end=${segment.outSeconds},asetpts=PTS-${segment.inSeconds}/TB[at${i}]`);
+      }
+      graph.push(`${segments.map((_, i) => `[vt${i}]${probe.hasAudio ? `[at${i}]` : ""}`).join("")}concat=n=${segments.length}:v=1:a=${probe.hasAudio ? 1 : 0}[joinedv]${probe.hasAudio ? "[joineda]" : ""}`);
+      graph.push(`[joinedv]${filters.join(",")}[video]`);
+      if (probe.hasAudio) graph.push(`[joineda]volume=${edit.gainDb}dB[audio]`);
+      args = ["-i", source, "-filter_complex", graph.join(";"), "-filter_complex_threads", "2", "-t", String(duration),
+        "-map", "[video]", ...(probe.hasAudio ? ["-map", "[audio]"] : ["-an"])];
+    } else {
+      // Keep the original seek/single-clip path and its public behaviour intact.
+      args = ["-ss", String(edit.inSeconds), "-i", source, "-t", String(duration), "-map", "0:v:0",
+        ...(probe.hasAudio ? ["-map", "0:a:0", "-af", `volume=${edit.gainDb}dB`] : ["-an"]), "-vf", filters.join(",")];
+    }
+    return this.encode(outputId, destination, container, args, { duration, width, height, hasAudio: probe.hasAudio },
+      onProgress, signal, ".render-", caption?.text);
+  }
+
+  /** Full-source playback proxy. Source seconds map directly to proxy seconds. */
+  async proxy(sourceId: string, outputId: string, onProgress: (p: number) => void, signal: AbortSignal): Promise<MediaResult> {
+    sourceId = mediaId(sourceId); outputId = mediaId(outputId);
+    if (sourceId === outputId) throw new Error("media_source_is_immutable");
+    signal.throwIfAborted();
+    const source = await this.existing(sourceId), destination = this.path(outputId);
+    const container = await containerOf(source, signal);
+    const probe = await this.probeFile(source, container, signal);
+    const factor = Math.min(1, 1280 / probe.width, 720 / probe.height);
+    const width = Math.floor(probe.width * factor / 2) * 2, height = Math.floor(probe.height * factor / 2) * 2;
+    if (width < 2 || height < 2) throw new Error("media_dimensions_too_small");
+    // FFmpeg's input autorotation precedes scaling; scale retains display aspect
+    // via SAR (including anamorphic inputs and even-pixel rounding). No fps,
+    // tempo or independent timestamp resets: preserve the shared A/V clock/VFR.
+    const args = ["-i", source, "-map", "0:v:0", ...(probe.hasAudio ? ["-map", "0:a:0"] : ["-an"]),
+      "-vf", `scale=${width}:${height}`, "-vsync", "0"];
+    return this.encode(outputId, destination, container, args, { ...probe, width, height }, onProgress, signal, ".proxy-");
+  }
+
+  private async encode(outputId: string, destination: string, container: Container, args: string[], expected: MediaProbe,
+    onProgress: (p: number) => void, signal: AbortSignal, prefix: string, caption?: string): Promise<MediaResult> {
+    const workspace = await mkdtemp(join(this.directory, prefix));
     const temporary = join(workspace, "output.mp4");
     let progress = -1, pending = "";
     const report = (value: number) => {
@@ -433,17 +502,12 @@ export class MediaEngine {
       try { onProgress(value); } catch { /* host observer failure */ }
     };
     try {
-      const filters = [`crop=${width}:${height}:(iw-ow)/2:(ih-oh)/2`, "setsar=1"];
-      if (caption) {
-        await writeFile(join(workspace, "caption.txt"), caption.text, { flag: "wx", mode: 0o600 });
-        filters.push(`drawtext=textfile=caption.txt:expansion=none:fontcolor=white:fontsize=${caption.fontSize}:line_spacing=${caption.spacing}:box=1:boxcolor=black@0.6:boxborderw=${caption.border}:x=(w-text_w)/2:y=h-text_h-${caption.margin + caption.border}`);
-      }
+      if (caption) await writeFile(join(workspace, "caption.txt"), caption, { flag: "wx", mode: 0o600 });
       report(0);
       await this.run("ffmpeg", ["-hide_banner", "-nostdin", "-loglevel", "error", "-max_alloc", "268435456",
-        ...this.inputArgs(container), "-threads", "2", "-ss", String(edit.inSeconds), "-i", source,
-        "-t", String(edit.outSeconds - edit.inSeconds), "-map", "0:v:0", ...(probe.hasAudio ? ["-map", "0:a:0"] : ["-an"]),
-        "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1", "-vf", filters.join(","),
-        ...(probe.hasAudio ? ["-af", `volume=${edit.gainDb}dB`, "-c:a", "aac", "-b:a", "128k", "-ac", "2"] : []),
+        ...this.inputArgs(container), "-threads", "2", ...args,
+        "-sn", "-dn", "-map_metadata", "-1", "-map_chapters", "-1",
+        ...(expected.hasAudio ? ["-c:a", "aac", "-b:a", "128k", "-ac", "2"] : []),
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "20", "-threads", "2",
         "-filter_threads", "2", "-movflags", "+faststart", "-progress", "pipe:1", "-nostats", "-fs", String(this.maxBytes + 1), "-f", "mp4", "-n", temporary],
       { signal, cwd: workspace, stdout: text => {
@@ -453,13 +517,13 @@ export class MediaEngine {
         if (pending.length > 8192) throw new Error("invalid_media_progress");
         for (const line of lines) {
           const match = /^out_time_(?:us|ms)=(\d+)$/u.exec(line);
-          if (match) report(Math.min(0.99, Number(match[1]) / 1e6 / (edit.outSeconds - edit.inSeconds)));
+          if (match) report(Math.min(0.99, Number(match[1]) / 1e6 / expected.duration));
         }
       } });
       signal.throwIfAborted();
-      const rendered = await this.probeFile(temporary, await containerOf(temporary, signal), signal);
-      if (Math.abs(rendered.duration - (edit.outSeconds - edit.inSeconds)) > 0.5 || rendered.hasAudio !== probe.hasAudio
-        || rendered.width !== width || rendered.height !== height) throw new Error("media_render_incomplete");
+      const rendered = await this.probeFile(temporary, await containerOf(temporary, signal), signal, true);
+      if (Math.abs(rendered.duration - expected.duration) > 0.5 || rendered.hasAudio !== expected.hasAudio
+        || rendered.width !== expected.width || rendered.height !== expected.height) throw new Error("media_render_incomplete");
       const digest = await this.digest(temporary, signal);
       signal.throwIfAborted();
       await link(temporary, destination);

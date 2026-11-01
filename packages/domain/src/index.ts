@@ -1,9 +1,11 @@
-/** Future cross-platform/AI contracts. Current validated runtime models live in workspace.ts, youtube.ts, media.ts and studio.ts. */
-export { editSchema, mediaProbeSchema, type MediaEdit, type MediaProbe } from "./media.js";
+/** Runtime models plus future cross-platform contracts; unimplemented ports remain explicitly documented. */
+export { editSchema, segmentSchema, mediaProbeSchema, type MediaEdit, type MediaProbe } from "./media.js";
 export { publicationInputSchema, studioContextSchema, type StudioArtifact, type StudioPublication,
   type StudioTimeline, type StudioRender, type PublicationPayload, type PublicationInput } from "./studio.js";
 export * from "./workspace.js";
 export * from "./youtube.js";
+export { aiScopeSchema, aiRequestSchema, aiProposalSchema, type AiRun } from "./ai.js";
+export { transcriptSchema, transcriptSegmentSchema, transcriptionErrorSchema, type Transcript, type TranscriptSegment } from "./transcription.js";
 export const SOCIAL_PLATFORMS = ["youtube", "x", "tiktok", "linkedin"] as const;
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 export type IsoTimestamp = string;

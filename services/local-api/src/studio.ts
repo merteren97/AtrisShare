@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Readable } from "node:stream";
 import type { MediaEdit } from "../../../packages/domain/src/media.js";
+import { editSchema } from "../../../packages/domain/src/media.js";
 import { publicationInputSchema, type PublicationInput, type StudioPublication, type StudioRender } from "../../../packages/domain/src/studio.js";
 import type { WorkspaceContext } from "../../../packages/domain/src/workspace.js";
 import { MediaEngine, type MediaEngineOptions } from "../../../packages/media-engine/src/index.js";
@@ -38,7 +39,7 @@ export class StudioService {
         try { this.reconcile(p.id, context); } catch { /* Another owner may be checking it. */ }
       }
     }
-    return { artifacts: this.store.studio.artifacts(context), publications, renders: this.store.studio.renders(context), tools: await this.engine.status() };
+    return { artifacts: this.store.studio.artifacts(context).filter(a => a.kind !== "proxy" && a.kind !== "preview"), publications, renders: this.store.studio.renders(context), tools: await this.engine.status() };
   }
   async import(context: WorkspaceContext, input: Readable, filename: string, signal: AbortSignal) {
     const scope = this.store.studio.scope(context);
@@ -49,7 +50,7 @@ export class StudioService {
     const operation = (async () => {
       try {
         const result = await this.engine.import(id, input, filename, AbortSignal.any([signal, this.shutdown.signal]));
-        return this.store.studio.addArtifact({ ...result, ...scope, sourceId: null, channelVideoId: null, createdAt: new Date().toISOString() });
+        return this.store.studio.addArtifact({ ...result, ...scope, kind: "source", sourceId: null, channelVideoId: null, createdAt: new Date().toISOString() });
       } catch (error) { await this.engine.remove(id).catch(() => undefined); throw new WorkspaceError(400, code(error)); }
       finally { this.imports--; }
     })();
@@ -60,6 +61,7 @@ export class StudioService {
     const account = this.store.listAccounts().find(a => a.id === value.context.accountId);
     if (!account || account.platform !== "youtube" || account.status !== "connected") throw new WorkspaceError(409, "youtube_reauth_required");
     const artifact = this.store.studio.artifact(value.artifactId, value.context);
+    if (artifact.kind === "proxy" || artifact.kind === "preview") throw new WorkspaceError(409, "media_proxy_not_publishable");
     if (!await this.engine.verify(artifact.id, artifact.sha256)) throw new WorkspaceError(409, "media_source_changed");
     return this.store.studio.create(value, account.destinationId);
   }
@@ -185,35 +187,57 @@ export class StudioService {
     }
   }
   render(id: string, context: WorkspaceContext, expectedRevision: number): StudioRender {
+    const timeline = this.store.studio.timeline(id, context);
+    if (timeline.revision !== expectedRevision) throw new WorkspaceError(409, "revision_conflict");
+    const edit = timeline.edits[timeline.cursor];
+    if (!edit) throw new WorkspaceError(409, "timeline_empty");
+    return this.startRender(id, context, "export", edit, expectedRevision);
+  }
+  proxy(id: string, context: WorkspaceContext): StudioRender {
+    return this.startRender(id, context, "proxy", null, 0);
+  }
+  renderCandidate(id: string, context: WorkspaceContext, edit: MediaEdit, expectedRevision: number, sha256: string): StudioRender {
+    const artifact = this.store.studio.artifact(id, context);
+    if (artifact.sha256 !== sha256) throw new WorkspaceError(409, "media_source_changed");
+    if (this.store.studio.timeline(id, context).revision !== expectedRevision) throw new WorkspaceError(409, "revision_conflict");
+    const value = editSchema.parse(edit);
+    if (!artifact.probe || value.outSeconds > artifact.probe.duration + .001) throw new WorkspaceError(400, "timeline_bounds");
+    return this.startRender(id, context, "preview", value, expectedRevision);
+  }
+  private startRender(id: string, context: WorkspaceContext, kind: "export" | "proxy" | "preview", edit: MediaEdit | null, revision: number): StudioRender {
     if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
     if ([...this.tasks.keys()].some(key => key.startsWith("render:"))) throw new WorkspaceError(409, "media_busy");
     const artifact = this.store.studio.artifact(id, context);
-    const timeline = this.store.studio.timeline(id, context);
-    if (timeline.revision !== expectedRevision) throw new WorkspaceError(409, "revision_conflict");
-    const edit: MediaEdit | undefined = timeline.edits[timeline.cursor];
-    if (!edit) throw new WorkspaceError(409, "timeline_empty");
-    const render: StudioRender = { id: randomUUID(), sourceId: id, state: "running", progress: 0, error: null, artifactId: null };
+    if (artifact.kind === "proxy") throw new WorkspaceError(409, "media_proxy_readonly");
+    const render: StudioRender = { id: randomUUID(), sourceId: id, kind, state: "running", progress: 0, error: null, artifactId: null };
     this.store.studio.addRender(context, render, this.owner);
     this.launch(`render:${render.id}`, async signal => {
       const outputId = randomUUID();
+      let registered = false;
       let heartbeatFailed = false;
       const heartbeat = setInterval(() => {
         try { this.store.studio.saveRender(render, this.owner); }
         catch { heartbeatFailed = true; this.tasks.get(`render:${render.id}`)?.abort.abort(); }
       }, 30_000);
       try {
-        if (!await this.engine.verify(id, artifact.sha256)) throw new WorkspaceError(409, "media_source_changed");
-        const result = await this.engine.render(id, outputId, edit, progress => {
+        if (!await this.engine.verify(id, artifact.sha256, signal)) throw new WorkspaceError(409, "media_source_changed");
+        const progress = (progress: number) => {
           render.progress = Math.max(0, Math.min(1, progress)); this.store.studio.saveRender(render, this.owner);
-        }, signal);
+        };
+        const result = kind === "proxy" ? await this.engine.proxy(id, outputId, progress, signal)
+          : await this.engine.render(id, outputId, edit!, progress, signal);
         signal.throwIfAborted();
-        this.store.studio.addArtifact({ ...result, filename: `${artifact.filename.replace(/\.[^.]+$/, "")}-edit-r${timeline.revision}.mp4`, accountId: context.accountId, projectId: context.projectId!,
-          sourceId: id, channelVideoId: artifact.channelVideoId, createdAt: new Date().toISOString() });
+        if (!await this.engine.verify(id, artifact.sha256, signal)) throw new WorkspaceError(409, "media_source_changed");
+        signal.throwIfAborted();
+        this.store.studio.addArtifact({ ...result, filename: `${artifact.filename.replace(/\.[^.]+$/, "")}-${kind === "export" ? `edit-r${revision}` : kind}.mp4`, accountId: context.accountId, projectId: context.projectId!,
+          kind, sourceId: id, sourceSha256: artifact.sha256, channelVideoId: artifact.channelVideoId, createdAt: new Date().toISOString() });
+        registered = true;
+        if (kind === "proxy") this.store.studio.attachProxy(id, context, outputId, artifact.sha256);
         render.state = "succeeded"; render.progress = 1; render.artifactId = outputId;
-        try { this.store.createMemory({ context, kind: "edit-history", reviewState: "confirmed", text: `${artifact.filename} · timeline r${timeline.revision} · ${edit.inSeconds}–${edit.outSeconds}s · ${edit.crop} · ${edit.gainDb} dB` }); }
+        try { if (kind === "export" && edit) this.store.createMemory({ context, kind: "edit-history", reviewState: "confirmed", text: `${artifact.filename} · timeline r${revision} · ${JSON.stringify(edit.segments ?? [{ inSeconds: edit.inSeconds, outSeconds: edit.outSeconds }])} · ${edit.crop} · ${edit.gainDb} dB` }); }
         catch { /* A completed artifact must survive an optional memory failure. */ }
       } catch (error) {
-        await this.engine.remove(outputId).catch(() => undefined);
+        if (!registered) await this.engine.remove(outputId).catch(() => undefined);
         render.state = heartbeatFailed ? "failed" : signal.aborted ? "cancelled" : "failed";
         render.error = heartbeatFailed ? "media_storage_unavailable" : signal.aborted ? null : code(error);
       } finally { clearInterval(heartbeat); this.store.studio.saveRender(render, this.owner); }

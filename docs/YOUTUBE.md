@@ -4,7 +4,8 @@ Phase 2 code implements Desktop OAuth, refresh, channel verification, disconnect
 owned catalog pagination/linking, local-media import, immutable publication review,
 resumable upload, processing and receipts/reconciliation. Tests exercise the actual
 services through controlled provider transports, **not live Google**. Live connection
-and publication acceptance are pending; neither is claimed here. Any live Google
+and publication acceptance are deferred to final **Phase 9**; neither is claimed
+here. No secrets were provided and no live OAuth tests were run. Any live Google
 flow requires a user-owned OAuth application, authorized channel and explicit human
 approval before upload. Connecting an account alone does not authorize publication.
 
@@ -14,8 +15,20 @@ approval before upload. Connecting an account alone does not authorize publicati
 2. Configure Google Auth Platform branding/audience/data access. For an external
    application in Testing, add the authorized Google account as a test user.
 3. Create an OAuth client of type **Desktop app**, not Web application.
-4. Set the application client configuration in the environment used to launch
-   AtrisShare, then start/restart the application. `.env` is not loaded automatically.
+4. Open **Accounts → YouTube app setup** in AtrisShare. Enter the Desktop client ID
+   and, if Google provided one, its optional client secret; save the configuration.
+   It activates immediately without restart and persists in the Windows DPAPI vault.
+
+The UI/API returns only readiness, source (`local`, `env` or `none`), scopes and
+bounded errors, never saved client values or credentials. Values are not stored in
+browser storage. The app-client record uses a reserved encrypted vault reference,
+separate from connected-account grants. A valid saved local configuration takes
+precedence over the launch environment. If no local record exists, the environment
+is a fallback; unreadable/invalid saved configuration fails closed and can be replaced
+through setup. Configuration and OAuth sessions are race-fenced: finish/cancel an
+active session before changing setup, and session creation is blocked while saving.
+
+Optional launch-environment fallback (`.env` is not automatically loaded):
 
 ```powershell
 $env:ATRIS_SHARE_YOUTUBE_CLIENT_ID = '<desktop-client-id>.apps.googleusercontent.com'
@@ -27,8 +40,11 @@ npm run tauri:dev
 These are application configuration values, not a Google password, authorization
 code or account access/refresh token. Desktop clients are public clients; their
 client secret is not an authorization boundary. Do not commit the downloaded client
-JSON. Account credentials are stored only in the Windows DPAPI vault. No secret
-configuration/token CRUD endpoint is exposed to the frontend.
+JSON. Account credentials are stored only in the Windows DPAPI vault. The authenticated
+setup endpoint accepts app configuration but exposes no credential-readback or
+account-token CRUD endpoint. Changing app setup applies to subsequent connections;
+existing connected-account grants retain their original client configuration for
+refresh/revoke. It does not rewrite their credentials or switch their OAuth client.
 
 Google testing-mode grants may expire (commonly after seven days for external
 Testing applications using YouTube scopes); reauthorization is expected. Public
@@ -82,12 +98,22 @@ the server verifies video ownership again with `videos.list`. Artifacts, links,
 timelines, exports and publication records remain account/project scoped; the remote
 catalog request is account/destination scoped.
 
-The manual editor saves one clip's trim, centered original/9:16/square crop, static
-caption and audio gain with optimistic revisions, undo/redo and reopen. Export
-creates a new artifact with progress/cancellation; retry means a new export from
-the saved revision. The player previews the stored source/export, not a live render
-of unsaved fields. Multi-track, split and proxies are not implemented. Inspection
-and export require external FFprobe/FFmpeg; see [media tooling](../packages/media-engine/README.md).
+The limited manual editor saves trim/split/remove as 1–32 ordered kept ranges within
+an outer source envelope; actual concat removes gaps while preserving shared A/V
+origin and padding missing/offset audio. Centered original/9:16/square crop, static
+caption and gain apply globally. Revision/CAS save, undo/redo branching and reopen
+are supported. Export creates a new artifact with progress/cancellation; retry is a
+new export from the saved revision. Full-source/hash-linked H.264/AAC proxies,
+bounded to 1280×720 with rotation/aspect preserved, retain source-time playback.
+Neither proxy playback nor stored source playback renders unsaved edits. Multi-track
+and timed captions are absent. Inspection/export require external FFprobe/FFmpeg;
+see [media tooling](../packages/media-engine/README.md).
+
+The implemented Phase 4 AI/MCP tools can propose edits, render previews and run local
+transcription with separate transcript disclosure consent. Its
+`publication_request` tool creates only a review draft for the grant-bound artifact;
+it cannot approve or upload. Proxy/proposal-preview artifacts are not publishable.
+No live LLM inference or YouTube acceptance is implied by external-MCP acceptance.
 
 ## Review, dispatch and reconciliation
 
@@ -140,13 +166,16 @@ referenced vault records manually.
 
 ## Local API
 
-All `/api/` routes require the per-launch bearer token and allowed origin/host.
+YouTube and trusted desktop `/api/` routes require the per-launch bearer token and
+allowed origin/host. The separate `/api/mcp/*` surface accepts only UI-minted scoped
+MCP grants, not desktop approval authority; see [MCP](../services/mcp-server/README.md).
 Mutation bodies are strict JSON except the raw media-import stream. No route accepts
 caller-supplied access/refresh tokens or resumable session URLs.
 
 | Method | Route | Body / result |
 | --- | --- | --- |
-| GET | `/api/youtube` | Safe configured/available flags and requested scope names |
+| GET | `/api/youtube` | Safe configured/available flags, scope names, `configuredSource` and optional bounded `configurationError`; no saved values |
+| POST | `/api/youtube/config` | `{clientId, clientSecret?}`; save encrypted Desktop app setup and activate immediately; returns safe readiness only |
 | POST | `/api/youtube/sessions` | `{expectedChannelId, accountId?}`; account ID is required for reconnect |
 | GET | `/api/youtube/sessions/:id` | Safe pending/result state, expected channel, expiry and bounded error code |
 | POST | `/api/youtube/sessions/:id/open` | Reopen the internally generated authorization URL |
@@ -164,13 +193,17 @@ the callback requires the matching one-use state and PKCE exchange. It redirects
 to a fixed query-free page with no external resources, no referrer and restrictive
 CSP. It never renders provider text, codes, tokens or the runtime session key.
 
-## Acceptance still required
+## Final acceptance — Phase 9
 
-Using a user-owned Desktop OAuth client and authorized test channel: accept live
+After Phase 8 hardening, packaging and feature completion, use a user-owned Desktop
+OAuth client and authorized test channel at [Phase 9](ACCEPTANCE.md): accept live
 connect/cancel/deny, refresh, restart and disconnect/revoke, then the implemented
 import → review → explicit approval → upload → processing → receipt/reconciliation
-flow. Choose visibility deliberately; public publication needs its own explicit
-human review. Controlled-provider tests are not evidence of live Google acceptance.
+flow using an explicitly human-approved **private** test publication. Public
+publication needs its own explicit human review. Controlled-provider tests and
+local setup/UI checks continue as engineering evidence, not live Google acceptance.
+This deferral does not make Phase 2 features incomplete. Release authorization is
+only possible after Phase 9 and a separate explicit request.
 Google app verification, API audit, quota and privacy restrictions still apply.
 
 Official references (checked 2026-11-01):

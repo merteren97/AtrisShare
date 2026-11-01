@@ -6,9 +6,17 @@ import { WorkspaceError } from "../../../packages/storage/src/config.js";
 import type { WorkspaceStore } from "../../../packages/storage/src/store.js";
 import type { CredentialVault } from "../../../packages/storage/src/vault.js";
 import { openAuthorizationBrowser } from "./open-browser.js";
-import { desktopClientFromEnv, YouTubeProvider, type GoogleDesktopClient, type GoogleTokens } from "./youtube-provider.js";
+import { desktopClientFromEnv, googleDesktopClientSchema, YouTubeProvider, type GoogleDesktopClient, type GoogleTokens } from "./youtube-provider.js";
 
 const SESSION_TTL = 10 * 60_000;
+// Reserved app-client record, NOT an account grant or a copy-on-write credential generation.
+// Shared by runtimes for this workspace; last encrypted app-config write wins.
+const LOCAL_CLIENT_REF = "account:bd18cc87-827d-4cb4-a1e2-9bfab2b48ec6";
+const MAX_LOCAL_CLIENT_LENGTH = 2048;
+export interface LocalYouTubeSetup extends YouTubeSetup {
+  configuredSource?: "env" | "local" | "none";
+  configurationError?: "youtube_config_invalid" | "youtube_config_load_failed";
+}
 const credentialSchema = z.object({
   clientId: z.string(), clientSecret: z.string().optional(), accessToken: z.string().min(1), refreshToken: z.string().min(1),
   expiresAt: z.number(), scopes: z.array(z.string())
@@ -31,7 +39,11 @@ export interface YouTubeOptions {
   now?: () => number;
 }
 export class YouTubeService {
-  private readonly client: GoogleDesktopClient | null;
+  private client: GoogleDesktopClient | null;
+  private readonly fallbackClient: GoogleDesktopClient | null;
+  private configuredSource: "env" | "local" | "none";
+  private configurationError: LocalYouTubeSetup["configurationError"];
+  private configLock = false;
   private readonly provider: YouTubeProvider;
   private readonly openBrowser: (url: string) => Promise<boolean>;
   private readonly clock: () => number;
@@ -41,14 +53,76 @@ export class YouTubeService {
   private readonly accountLocks = new Set<string>();
   constructor(private readonly store: WorkspaceStore, private readonly vault: CredentialVault, options: YouTubeOptions = {}) {
     this.client = options.client === undefined ? desktopClientFromEnv() : options.client;
+    this.fallbackClient = this.client;
+    this.configuredSource = this.client ? "env" : "none";
     this.provider = options.provider ?? new YouTubeProvider();
     this.openBrowser = options.openBrowser ?? openAuthorizationBrowser;
     this.clock = options.now ?? Date.now;
   }
-  setup(): YouTubeSetup { return { configured: this.client !== null, available: this.client !== null && this.vault.status.available, scopes: YOUTUBE_SCOPES }; }
+  setup(): LocalYouTubeSetup {
+    return { configured: this.client !== null, available: this.client !== null && this.vault.status.available && !this.configLock && !this.shutdown.signal.aborted,
+      scopes: YOUTUBE_SCOPES, configuredSource: this.configuredSource, ...(this.configurationError ? { configurationError: this.configurationError } : {}) };
+  }
+  private lockConfig(): void {
+    if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
+    if (this.configLock) throw new WorkspaceError(409, "youtube_configuring");
+    this.assertNoActiveSession();
+    this.configLock = true;
+  }
+  private assertNoActiveSession(): void {
+    if (this.pending && ["awaiting-browser", "verifying"].includes(this.view(this.pending).state)) throw new WorkspaceError(409, "youtube_session_active");
+  }
+  /** Await during API startup, before listening. Missing local config uses the environment fallback. */
+  async loadLocalClient(): Promise<void> {
+    this.lockConfig();
+    try {
+      await this.tracked(async () => {
+        let client = this.fallbackClient;
+        let source: "env" | "local" | "none" = client ? "env" : "none";
+        let error: LocalYouTubeSetup["configurationError"];
+        if (this.vault.status.available) {
+          try {
+            const saved = await this.vault.get(LOCAL_CLIENT_REF);
+            if (saved !== null) {
+              // Bound before parsing; never propagate JSON/Zod/vault diagnostics or record contents.
+              const parsed = saved.length <= MAX_LOCAL_CLIENT_LENGTH ? googleDesktopClientSchema.safeParse(JSON.parse(saved)) : null;
+              if (!parsed?.success) { client = null; source = "none"; error = "youtube_config_invalid"; }
+              else { client = parsed.data; source = "local"; }
+            }
+          } catch (failure) {
+            client = null; source = "none";
+            error = failure instanceof SyntaxError ? "youtube_config_invalid" : "youtube_config_load_failed";
+          }
+        }
+        if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
+        this.assertNoActiveSession();
+        this.client = client; this.configuredSource = source; this.configurationError = error;
+      });
+    } finally { this.configLock = false; }
+  }
+  /** Saves only Desktop OAuth app configuration; returns readiness, never client credentials. */
+  async configure(input: { clientId: string; clientSecret?: string }): Promise<LocalYouTubeSetup> {
+    this.lockConfig();
+    try {
+      await this.tracked(async () => {
+        if (!this.vault.status.available) throw new WorkspaceError(409, "vault_unavailable");
+        const parsed = googleDesktopClientSchema.safeParse(input);
+        if (!parsed.success) throw new WorkspaceError(400, "youtube_invalid_client_config");
+        try { await this.vault.set(LOCAL_CLIENT_REF, JSON.stringify(parsed.data)); }
+        catch { throw new WorkspaceError(503, "youtube_config_save_failed"); }
+        // The lock blocks start() across the encrypted write. Recheck before activating in memory.
+        // If closing during the write, persisted config may load next startup, but is never activated here.
+        if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
+        this.assertNoActiveSession();
+        this.client = parsed.data; this.configuredSource = "local"; this.configurationError = undefined;
+      });
+    } finally { this.configLock = false; }
+    return this.setup();
+  }
   isBusy(accountId: string): boolean { return this.accountLocks.has(accountId); }
   private ready(): GoogleDesktopClient {
     if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
+    if (this.configLock) throw new WorkspaceError(409, "youtube_configuring");
     if (!this.vault.status.available) throw new WorkspaceError(409, "vault_unavailable");
     if (!this.client) throw new WorkspaceError(409, "youtube_not_configured");
     return this.client;

@@ -1,7 +1,8 @@
 # Platform integration plan
 
-**YouTube connection and supervised publishing code are implemented; live acceptance
-is pending.** OAuth/PKCE, channel/subject verification, vault storage, refresh/
+**YouTube connection and supervised publishing features are implemented; live acceptance
+is deferred to final Phase 9.** In-app encrypted Desktop OAuth setup, OAuth/PKCE,
+channel/subject verification, vault storage, refresh/
 disconnect, owned catalog pagination/linking, immutable review, resumable upload,
 processing receipts and reconciliation have controlled-provider coverage, not live
 Google acceptance. Live use needs a user-owned OAuth app, authorized channel and
@@ -10,10 +11,16 @@ remain planned; access products/restrictions can change.
 
 | Platform | Operations / target | Integration discovery required |
 | --- | --- | --- |
-| YouTube | Implemented verification, owned metadata/linking and supervised video upload/reconciliation; short-form classification unverified | Live acceptance, OAuth/API review, quotas, privacy restrictions and Shorts eligibility |
+| YouTube | Implemented verification, owned metadata/linking and supervised video upload/reconciliation; short-form classification unverified | Phase 9 live acceptance, OAuth/API review, quotas, privacy restrictions and Shorts eligibility |
 | X | Text composition and supported media posts | OAuth/user context, write/media product access, pricing tier, character/media constraints and rate limits |
 | TikTok | Short-video preparation and permitted publishing flow | Content Posting API eligibility/review, consent UX, account restrictions, upload/processing states and visibility options |
 | LinkedIn | Member and, where permitted, organization text/video posts | OAuth products/scopes, organization roles, media upload flow, API versioning and app review |
+
+All implemented connectors join the [Phase 9 acceptance matrix](ACCEPTANCE.md)
+after Phase 8 hardening, packaging and feature completion. Local regressions and
+controlled-provider checks continue; they do not establish live provider acceptance.
+No secrets were supplied and no live OAuth tests were run. Release authorization
+requires Phase 9 completion and a separate explicit request.
 
 Official starting points:
 

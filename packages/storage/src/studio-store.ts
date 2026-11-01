@@ -6,6 +6,7 @@ import { editSchema, type MediaEdit } from "../../domain/src/media.js";
 import type { WorkspaceContext } from "../../domain/src/workspace.js";
 import { idSchema } from "../../domain/src/workspace.js";
 import { WorkspaceError } from "./config.js";
+import type { AiRun } from "../../domain/src/ai.js";
 
 type Row = { data: string; session_ref?: string | null; owner?: string | null; lease_until?: number };
 /** Stable field order, fixed schema version, no client-provided canonical bytes. */
@@ -50,13 +51,24 @@ export class StudioStore {
       this.audit(scope, "media.linked", id); return artifact;
     });
   }
+  attachProxy(id: string, scope: WorkspaceContext, proxyId: string, sha256: string): StudioArtifact {
+    return this.transaction(() => {
+      const artifact = this.artifact(id, scope), proxy = this.artifact(proxyId, scope);
+      if (artifact.sha256 !== sha256 || proxy.sourceId !== id || proxy.kind !== "proxy" || proxy.sourceSha256 !== sha256) throw new WorkspaceError(409, "media_source_changed");
+      const next = { ...artifact, proxyId };
+      this.db.prepare("UPDATE artifacts SET data=? WHERE id=?").run(JSON.stringify(next), id);
+      this.audit(scope, "media.proxy-created", id); return next;
+    });
+  }
   timeline(id: string, scope: WorkspaceContext): StudioTimeline {
     this.artifact(id, scope);
     const row = this.db.prepare("SELECT data FROM timelines WHERE artifact_id=?").get(id) as Row | undefined;
     return row ? JSON.parse(row.data) as StudioTimeline : { revision: 0, cursor: -1, edits: [] };
   }
   edit(id: string, scope: WorkspaceContext, revision: number, edit?: MediaEdit, direction?: "undo" | "redo"): StudioTimeline {
-    return this.transaction(() => {
+    return this.transaction(() => this.writeEdit(id, scope, revision, edit, direction));
+  }
+  private writeEdit(id: string, scope: WorkspaceContext, revision: number, edit?: MediaEdit, direction?: "undo" | "redo"): StudioTimeline {
       const timeline = this.timeline(id, scope), artifact = this.artifact(id, scope);
       if (timeline.revision !== revision) throw new WorkspaceError(409, "revision_conflict");
       if (direction) {
@@ -72,6 +84,78 @@ export class StudioStore {
       timeline.revision++;
       this.db.prepare("INSERT INTO timelines VALUES(?,?) ON CONFLICT(artifact_id) DO UPDATE SET data=excluded.data").run(id, JSON.stringify(timeline));
       this.audit(scope, "timeline.saved", id); return timeline;
+  }
+  createAiRun(run: AiRun, owner: string): AiRun {
+    return this.transaction(() => {
+      const artifact = this.artifact(run.artifactId, run.context);
+      if (artifact.sha256 !== run.sourceSha256) throw new WorkspaceError(409, "media_source_changed");
+      if (run.state === "running" && this.db.prepare("SELECT id FROM ai_runs WHERE account_id=? AND project_id=? AND artifact_id=? AND json_extract(data,'$.state')='running' AND lease_until>?").get(run.context.accountId, run.context.projectId, run.artifactId, Date.now())) throw new WorkspaceError(409, "ai_busy");
+      this.db.prepare("INSERT INTO ai_runs(id,account_id,project_id,artifact_id,data,owner,lease_until) VALUES(?,?,?,?,?,?,?)").run(run.id, run.context.accountId, run.context.projectId, run.artifactId,
+        JSON.stringify(run), owner, run.state === "running" ? Date.now() + 300_000 : 0);
+      this.audit(run.context, "ai.requested", run.id); return run;
+    });
+  }
+  aiRun(id: string, scope: WorkspaceContext): AiRun {
+    idSchema.parse(id); const c = this.scope(scope);
+    const row = this.db.prepare("SELECT data,lease_until,cancel_requested FROM ai_runs WHERE id=? AND account_id=? AND project_id=?").get(id, c.accountId, c.projectId) as (Row & {cancel_requested:number}) | undefined;
+    if (!row) throw new WorkspaceError(404, "ai_run_not_found");
+    const run = JSON.parse(row.data) as AiRun;
+    return run.state === "running" && (row.lease_until ?? 0) <= Date.now() ? { ...run, state: "failed", error: "ai_interrupted" }
+      : run.state === "running" && row.cancel_requested ? { ...run, cancelRequested: true } : run;
+  }
+  aiRuns(artifactId: string, scope: WorkspaceContext): AiRun[] {
+    this.artifact(artifactId, scope);
+    return (this.db.prepare("SELECT id FROM ai_runs WHERE artifact_id=? ORDER BY rowid DESC LIMIT 30").all(artifactId) as {id:string}[]).map(row => this.aiRun(row.id, scope));
+  }
+  saveAiRun(run: AiRun, owner: string): void {
+    this.transaction(() => {
+      this.assertAiOwner(run.id, owner);
+      const row = this.db.prepare("SELECT cancel_requested FROM ai_runs WHERE id=?").get(run.id) as {cancel_requested:number};
+      if (row.cancel_requested) {
+        if (run.state === "running") throw new WorkspaceError(409, "ai_cancelled");
+        Object.assign(run, { state: "cancelled", summary: null, edit: null, error: null, cancelRequested: true });
+      }
+      this.db.prepare("UPDATE ai_runs SET data=?,lease_until=? WHERE id=? AND owner=?")
+        .run(JSON.stringify(run), run.state === "running" ? Date.now() + 300_000 : 0, run.id, owner);
+    });
+  }
+  private assertAiOwner(id: string, owner: string): void {
+    if (!this.db.prepare("SELECT id FROM ai_runs WHERE id=? AND owner=? AND json_extract(data,'$.state')='running' AND lease_until>?").get(id, owner, Date.now())) throw new WorkspaceError(409, "ai_run_conflict");
+  }
+  assertAiActive(id: string, owner: string): void {
+    this.assertAiOwner(id, owner);
+    if ((this.db.prepare("SELECT cancel_requested FROM ai_runs WHERE id=?").get(id) as {cancel_requested:number}).cancel_requested) throw new WorkspaceError(409, "ai_cancelled");
+  }
+  requestAiCancel(id: string, scope: WorkspaceContext): AiRun {
+    return this.transaction(() => {
+      const run = this.aiRun(id, scope);
+      if (run.state !== "running") throw new WorkspaceError(409, "ai_run_conflict");
+      this.db.prepare("UPDATE ai_runs SET cancel_requested=1 WHERE id=?").run(id);
+      this.audit(scope, "ai.cancel-requested", id); return { ...run, cancelRequested: true };
+    });
+  }
+  reviewAiRun(id: string, scope: WorkspaceContext, action: "accept" | "reject"): AiRun {
+    return this.transaction(() => {
+      const run = this.aiRun(id, scope);
+      if (run.state !== "ready" || !run.edit) throw new WorkspaceError(409, "ai_run_conflict");
+      if (action === "accept") {
+        const artifact = this.artifact(run.artifactId, scope);
+        if (artifact.sha256 !== run.sourceSha256) throw new WorkspaceError(409, "media_source_changed");
+        this.writeEdit(run.artifactId, scope, run.baseRevision, run.edit);
+      }
+      run.state = action === "accept" ? "accepted" : "rejected";
+      this.db.prepare("UPDATE ai_runs SET data=? WHERE id=?").run(JSON.stringify(run), id);
+      this.audit(scope, `ai.${run.state}`, id); return run;
+    });
+  }
+  attachAiPreview(id: string, scope: WorkspaceContext, renderId: string): AiRun {
+    return this.transaction(() => {
+      const run = this.aiRun(id, scope);
+      if (run.state !== "ready") throw new WorkspaceError(409, "ai_run_conflict");
+      const render = this.render(renderId, scope);
+      if (render.sourceId !== run.artifactId || render.kind !== "preview") throw new WorkspaceError(409, "ai_run_conflict");
+      run.previewRenderId = renderId;
+      this.db.prepare("UPDATE ai_runs SET data=? WHERE id=?").run(JSON.stringify(run), id); return run;
     });
   }
   publications(scope: WorkspaceContext): StudioPublication[] {

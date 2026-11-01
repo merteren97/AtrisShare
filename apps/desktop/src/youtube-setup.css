@@ -1,0 +1,32 @@
+.youtube-app-setup { padding: 23px; margin-bottom: 20px; min-width: 0; }
+.youtube-app-setup-heading { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 12px; }
+.youtube-app-setup-icon { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 9px; color: var(--accent); background: var(--accent-soft); flex-shrink: 0; }
+.youtube-app-setup-heading > div { flex: 1 1 240px; min-width: 0; }
+.youtube-app-setup-heading p, .youtube-app-setup-guide p, .youtube-app-setup-ready p { color: var(--muted); font-size: 12px; line-height: 1.8; }
+.youtube-app-setup-heading p { margin-top: 6px; max-width: 580px; }
+.youtube-app-setup-heading > .badge { display: inline-flex; align-items: center; gap: 6px; white-space: normal; max-width: 100%; line-height: 1.6; }
+.youtube-app-setup-ready { padding-left: 48px; margin-top: 13px; }
+.youtube-app-setup-ready .text-button { margin-top: 5px; }
+.youtube-app-setup-form { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--line); }
+.youtube-app-setup-guide { display: flex; align-items: flex-start; flex-wrap: wrap; gap: 8px 22px; margin-bottom: 20px; }
+.youtube-app-setup-guide p { flex: 1 1 320px; max-width: 680px; }
+.youtube-app-setup-guide a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+.youtube-app-setup-fields { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 20px; }
+.youtube-app-setup-fields .form-field { min-width: 0; margin-bottom: 0; }
+.youtube-app-setup-fields .field-help { margin: 0; color: var(--muted); font-size: 11px; font-weight: 400; line-height: 1.7; }
+.youtube-app-setup-optional { color: var(--muted); font-size: 10px; font-weight: 400; margin-left: 5px; }
+.youtube-app-setup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 20px; margin-top: 20px; }
+.youtube-app-setup-privacy { display: flex; align-items: flex-start; gap: 7px; margin-top: 14px; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.youtube-app-setup-privacy svg { margin-top: 2px; }
+.youtube-app-setup-error { margin-top: 12px; }
+.youtube-app-setup-success { display: flex; align-items: flex-start; gap: 8px; color: var(--accent); font-size: 12px; line-height: 1.8; margin-top: 14px; }
+.youtube-app-setup-success svg { margin-top: 3px; }
+.youtube-app-setup :is(button, input, a):focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
+@media (max-width: 740px) {
+  .youtube-app-setup { padding: 18px; }
+  .youtube-app-setup-fields { grid-template-columns: minmax(0, 1fr); gap: 18px; }
+  .youtube-app-setup-ready { padding-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .youtube-app-setup .spinning { animation: none; }
+}

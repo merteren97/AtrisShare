@@ -3,14 +3,14 @@ import { channelIdSchema, YOUTUBE_SCOPES } from "../../../packages/domain/src/yo
 import { WorkspaceError } from "../../../packages/storage/src/config.js";
 
 export interface GoogleDesktopClient { clientId: string; clientSecret?: string }
-const clientSchema = z.object({
-  clientId: z.string().regex(/^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/),
-  clientSecret: z.string().min(1).max(500).optional()
-}).strict();
+export const googleDesktopClientSchema = z.object({
+  clientId: z.string().max(256).regex(/^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/).refine(value => !/\s/.test(value)),
+  clientSecret: z.string().min(1).max(500).regex(/^[A-Za-z0-9_-]+$/).refine(value => !/\s/.test(value)).optional()
+}).strict().transform((value): GoogleDesktopClient => ({ clientId: value.clientId, ...(value.clientSecret ? { clientSecret: value.clientSecret } : {}) }));
 export function desktopClientFromEnv(): GoogleDesktopClient | null {
-  const parsed = clientSchema.safeParse({ clientId: process.env.ATRIS_SHARE_YOUTUBE_CLIENT_ID,
+  const parsed = googleDesktopClientSchema.safeParse({ clientId: process.env.ATRIS_SHARE_YOUTUBE_CLIENT_ID,
     ...(process.env.ATRIS_SHARE_YOUTUBE_CLIENT_SECRET ? { clientSecret: process.env.ATRIS_SHARE_YOUTUBE_CLIENT_SECRET } : {}) });
-  return parsed.success ? { clientId: parsed.data.clientId, ...(parsed.data.clientSecret ? { clientSecret: parsed.data.clientSecret } : {}) } : null;
+  return parsed.success ? parsed.data : null;
 }
 export const tokenSchema = z.object({
   access_token: z.string().min(1).max(8192), refresh_token: z.string().min(1).max(8192).optional(),

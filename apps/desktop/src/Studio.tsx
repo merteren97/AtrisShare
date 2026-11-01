@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ArrowDownToLine, Check, CircleAlert, Clapperboard, ExternalLink, FileVideo, Film, FolderOpen, Link2, LoaderCircle, Plus, RefreshCw, RotateCcw, RotateCw, ShieldCheck, Upload, X } from "lucide-react";
+import { ArrowDownToLine, Check, CircleAlert, Clapperboard, ExternalLink, FileVideo, Film, FolderOpen, Link2, LoaderCircle, Plus, RefreshCw, ShieldCheck, Upload, X } from "lucide-react";
 import type { WorkspaceAccount, WorkspaceContext } from "../../../packages/domain/src/workspace.js";
 import { binaryRequest, mediaBlob, request } from "./api";
 import { studioError, studioText, type StudioLanguage, type StudioTranslate } from "./studio-i18n";
+import { EditPanel } from "./TimelineEditor";
+import { AssistantPanel } from "./AssistantPanel";
 import "./studio.css";
 
 export interface StudioArtifact {
   id: string; accountId: string; projectId: string; filename: string; sha256: string; bytes: number; mimeType: string;
   probe: { duration: number; width: number; height: number; hasAudio: boolean } | null;
   sourceId: string | null; channelVideoId: string | null; createdAt: string;
+  proxyId?: string | null; kind?: "source" | "export" | "proxy" | "preview";
 }
 export interface StudioPublication {
   id: string; context: WorkspaceContext; revision: 1;
@@ -18,10 +21,8 @@ export interface StudioPublication {
   digest: string; state: "review" | "uploading" | "uncertain" | "processing" | "succeeded" | "failed" | "cancelled";
   approvalExpiresAt: string | null; progress: number; videoId: string | null; error: string | null; createdAt: string;
 }
-export interface StudioRender { id: string; sourceId: string; state: "running" | "succeeded" | "failed" | "cancelled"; progress: number; error: string | null; artifactId: string | null }
+export interface StudioRender { id: string; sourceId: string; kind?: "proxy" | "export" | "preview"; state: "running" | "succeeded" | "failed" | "cancelled"; progress: number; error: string | null; artifactId: string | null }
 interface StudioSnapshot { artifacts: StudioArtifact[]; publications: StudioPublication[]; tools: { available: boolean; ffmpeg: boolean; ffprobe: boolean }; renders: StudioRender[] }
-interface Edit { inSeconds: number; outSeconds: number; crop: "original" | "vertical" | "square"; gainDb: number; caption: string }
-interface Timeline { revision: number; cursor: number; edits: Edit[] }
 interface Catalog { items: { id: string; title: string; publishedAt: string; thumbnail: string | null }[]; nextPageToken: string | null }
 export interface StudioProps { context: WorkspaceContext; account: WorkspaceAccount; language: StudioLanguage; errorText: (e: unknown) => string }
 
@@ -54,7 +55,11 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
   const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<"media" | "publishing" | "channel">("media");
-  const [inspector, setInspector] = useState<"publish" | "edit">("publish");
+  const [inspector, setInspector] = useState<"publish" | "edit" | "assistant">("edit");
+  const [timelineEpoch, setTimelineEpoch] = useState(0);
+  const [sourceTime, setSourceTime] = useState(0);
+  const [seek, setSeek] = useState<{ artifactId: string; seconds: number; sequence: number } | null>(null);
+  const [proxyError, setProxyError] = useState<{ artifactId: string; error: unknown } | null>(null);
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [importing, setImporting] = useState(false);
@@ -88,8 +93,9 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
     try {
       const result = await request<StudioSnapshot>(`/api/studio?${baseQuery}`, "GET", undefined, abort.signal);
       if (abort.signal.aborted || lifetime.current.signal.aborted || sequence !== refreshSequence.current) return;
-      setSnapshot(result); setLoadError(null);
-      setSelectedId(current => current && result.artifacts.some(item => item.id === current) ? current : result.artifacts[0]?.id ?? null);
+      const visible = result.artifacts.filter(item => item.kind !== "proxy");
+      setSnapshot({ ...result, artifacts: visible }); setLoadError(null);
+      setSelectedId(current => current && visible.some(item => item.id === current) ? current : visible[0]?.id ?? null);
       setApproval(current => current ? result.publications.find(item => item.id === current.id && item.state === "review") ?? null : null);
     } catch (failure) { if (!abort.signal.aborted && !lifetime.current.signal.aborted) setLoadError(failure); }
     finally { if (sequence === refreshSequence.current && !lifetime.current.signal.aborted) setRefreshing(false); }
@@ -171,6 +177,8 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
     });
   }
   const tools = snapshot?.tools;
+  const proxyJob = snapshot?.renders.find(item => item.sourceId === selected?.id && item.kind === "proxy" && item.state === "running");
+  const seekSource = (seconds: number) => { if (selected) setSeek(current => ({ artifactId: selected.id, seconds, sequence: (current?.sequence ?? 0) + 1 })); };
 
   return <div className="studio">
     <header className="studio-heading">
@@ -193,27 +201,34 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
         <div className="studio-workbench">
           <aside className="studio-library"><div className="studio-pane-heading"><h2>{t("library")}</h2><span className="count">{snapshot.artifacts.length}</span></div>
             {snapshot.artifacts.length ? <ul className="studio-files">{snapshot.artifacts.map(item => <li key={item.id}><button className={`studio-file ${item.id === selectedId ? "is-selected" : ""}`} aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}>
-              <span className="studio-file-icon"><FileVideo size={19} /></span><span className="studio-file-copy"><strong title={item.filename}>{item.filename}</strong><small>{item.probe ? seconds(item.probe.duration) : bytes(item.bytes, language)} · {t(item.sourceId ? "exported" : "source")}</small></span>{item.channelVideoId && <Link2 size={12} aria-label={t("linked")} />}
+              <span className="studio-file-icon"><FileVideo size={19} /></span><span className="studio-file-copy"><strong title={item.filename}>{item.filename}</strong><small>{item.probe ? seconds(item.probe.duration) : bytes(item.bytes, language)} · {t(item.kind === "export" || !item.kind && item.sourceId ? "exported" : "source")}</small></span>{item.channelVideoId && <Link2 size={12} aria-label={t("linked")} />}
             </button></li>)}</ul> : <div className="studio-library-empty"><Film size={22} /><p>{t("emptyLibraryHelp")}</p></div>}
           </aside>
           <div className="studio-canvas">
-            {selected ? <><Preview key={selected.id} artifact={selected} context={scope} t={t} errorText={translateError} active={tab === "media"} />
+            {selected ? <><Preview key={selected.id} artifact={selected} context={scope} t={t} errorText={translateError} active={tab === "media"} toolsAvailable={!!tools?.available} busy={busy} proxyPending={!!proxyJob} proxyError={proxyError?.artifactId === selected.id ? proxyError.error : null} onTime={setSourceTime} seek={seek?.artifactId === selected.id ? seek : null} createProxy={() => { void act(async signal => {
+              setProxyError(null);
+              try {
+                const value = await request<StudioRender>(`/api/media/${encodeURIComponent(selected.id)}/proxy`, "POST", { context: scope }, signal);
+                if (!signal.aborted) { updateRender(value); await refresh(); }
+              } catch (failure) { if (!signal.aborted) setProxyError({ artifactId: selected.id, error: failure }); }
+            }); }} />
               <div className="studio-preview-caption"><div><h2>{selected.filename}</h2><p>{selected.probe ? `${seconds(selected.probe.duration)} · ${selected.probe.width} × ${selected.probe.height}${selected.probe.hasAudio ? "" : ` · ${t("noAudio")}`}` : t("noProbe")} · {bytes(selected.bytes, language)}</p></div>
                 <button className="icon-button" aria-label={t("download")} title={t("download")} disabled={busy || selected.bytes > BLOB_LIMIT} onClick={() => download(selected)}><ArrowDownToLine size={17} /></button></div>
               <details className="studio-file-details"><summary>{t("hash")}</summary><code>{selected.sha256}</code></details>
-              <RenderList renders={snapshot.renders.filter(item => item.sourceId === selected.id)} artifacts={snapshot.artifacts} t={t} busy={busy} errorText={translateError} open={selectArtifact} cancel={item => { void act(async signal => { const value = await request<StudioRender>(`/api/renders/${encodeURIComponent(item.id)}/cancel`, "POST", { context: scope }, signal); if (!signal.aborted) updateRender(value); }); }} />
+              <RenderList renders={snapshot.renders.filter(item => item.sourceId === selected.id && item.kind !== "preview")} artifacts={snapshot.artifacts} t={t} busy={busy} errorText={translateError} open={selectArtifact} cancel={item => { void act(async signal => { const value = await request<StudioRender>(`/api/renders/${encodeURIComponent(item.id)}/cancel`, "POST", { context: scope }, signal); if (!signal.aborted) updateRender(value); }); }} />
             </> : <div className="studio-preview-empty"><div className="studio-empty-frame"><Clapperboard size={38} strokeWidth={1.2} /></div><h2>{t(snapshot.artifacts.length ? "selectMedia" : "emptyLibrary")}</h2><p>{t(snapshot.artifacts.length ? "selectMediaHelp" : "emptyLibraryHelp")}</p>{!snapshot.artifacts.length && <button className="button secondary" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} />{t("import")}</button>}</div>}
           </div>
           <aside className="studio-inspector"><div className="studio-segmented" role="tablist" aria-label={selected?.filename ?? t("selectMedia")}>
-            {(["publish", "edit"] as const).map(name => <button key={name} role="tab" aria-selected={inspector === name} id={`${uniqueId}-${name}`} aria-controls={`${uniqueId}-inspector-${name}`} tabIndex={inspector === name ? 0 : -1}
-              onKeyDown={event => { if (["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) { event.preventDefault(); const next = event.key === "Home" ? "publish" : event.key === "End" ? "edit" : name === "publish" ? "edit" : "publish"; setInspector(next); document.getElementById(`${uniqueId}-${next}`)?.focus(); } }} onClick={() => setInspector(name)}>{t(name)}</button>)}
+            {(["edit", "publish", "assistant"] as const).map(name => <button key={name} role="tab" aria-selected={inspector === name} id={`${uniqueId}-${name}`} aria-controls={`${uniqueId}-inspector-${name}`} tabIndex={inspector === name ? 0 : -1}
+              onKeyDown={event => { const tabs = ["edit", "publish", "assistant"] as const; const index = tabs.indexOf(name); const next = event.key === "ArrowRight" ? tabs[(index + 1) % 3] : event.key === "ArrowLeft" ? tabs[(index + 2) % 3] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[2] : null; if (next) { event.preventDefault(); setInspector(next); document.getElementById(`${uniqueId}-${next}`)?.focus(); } }} onClick={() => setInspector(name)}>{t(name)}</button>)}
           </div>{selected ? <>
             <div role="tabpanel" id={`${uniqueId}-inspector-publish`} aria-labelledby={`${uniqueId}-publish`} hidden={inspector !== "publish"}><PublishForm key={selected.id} artifact={selected} account={account} t={t} busy={busy} connected={connected} submit={fields => {
               void act(async signal => { const result = await request<StudioPublication>("/api/publications", "POST", { context: scope, artifactId: selected.id, ...fields }, signal); if (signal.aborted) return; updatePublication(result); setTab("publishing"); setNotice("draftCreated"); });
             }} /></div>
-            <div role="tabpanel" id={`${uniqueId}-inspector-edit`} aria-labelledby={`${uniqueId}-edit`} hidden={inspector !== "edit"}><EditPanel key={selected.id} artifact={selected} context={scope} tools={snapshot.tools} t={t} errorText={translateError} parentBusy={busy} onExport={expectedRevision => {
+            <div role="tabpanel" id={`${uniqueId}-inspector-edit`} aria-labelledby={`${uniqueId}-edit`} hidden={inspector !== "edit"}><EditPanel key={selected.id} artifact={selected} context={scope} tools={snapshot.tools} t={t} errorText={translateError} parentBusy={busy} reloadKey={timelineEpoch} sourceTime={sourceTime} onSeek={seekSource} onExport={expectedRevision => {
               void act(async signal => { const value = await request<StudioRender>(`/api/media/${encodeURIComponent(selected.id)}/render`, "POST", { context: scope, expectedRevision }, signal); if (!signal.aborted) { updateRender(value); setNotice("renderStarted"); } });
             }} /></div>
+            <div role="tabpanel" id={`${uniqueId}-inspector-assistant`} aria-labelledby={`${uniqueId}-assistant`} hidden={inspector !== "assistant"}><AssistantPanel key={selected.id} artifact={selected} context={scope} account={account} language={language} onApplied={() => setTimelineEpoch(value => value + 1)} /></div>
           </> : <p className="studio-inspector-empty">{t("selectMediaHelp")}</p>}</aside>
         </div>
         {tools && <div className="studio-footnote"><span><ShieldCheck size={13} />{t("sourceSafe")}</span><span>{t("ffmpeg")}: {t(tools.ffmpeg ? "available" : "unavailable")} · {t("ffprobe")}: {t(tools.ffprobe ? "available" : "unavailable")}</span></div>}
@@ -266,31 +281,65 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
 
 function safeThumbnail(value: string | null): value is string { try { if (!value) return false; const url = new URL(value); return url.protocol === "https:" && ["i.ytimg.com", "img.youtube.com"].includes(url.hostname); } catch { return false; } }
 
-function Preview({ artifact, context, t, errorText, active }: { artifact: StudioArtifact; context: WorkspaceContext; t: StudioTranslate; errorText: (e: unknown) => string; active: boolean }) {
+function Preview({ artifact, context, t, errorText, active, toolsAvailable, busy, proxyPending, proxyError, createProxy, onTime, seek }: {
+  artifact: StudioArtifact; context: WorkspaceContext; t: StudioTranslate; errorText: (e: unknown) => string; active: boolean;
+  toolsAvailable: boolean; busy: boolean; proxyPending: boolean; proxyError: unknown; createProxy: () => void; onTime: (seconds: number) => void;
+  seek: { seconds: number; sequence: number } | null;
+}) {
   const [url, setUrl] = useState<string | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [playError, setPlayError] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [mode, setMode] = useState<"source" | "proxy">(artifact.proxyId ? "proxy" : "source");
   const video = useRef<HTMLVideoElement>(null);
-  const path = mediaPath(artifact.id, "content", context);
+  const position = useRef(0);
+  const previousProxy = useRef(artifact.proxyId);
+  const useProxy = mode === "proxy" && !!artifact.proxyId;
+  const limited = !useProxy && artifact.bytes > BLOB_LIMIT;
+  const path = mediaPath(useProxy ? artifact.proxyId! : artifact.id, "content", context);
   useEffect(() => {
-    if (artifact.bytes > BLOB_LIMIT) return;
+    if (artifact.proxyId && !previousProxy.current) setMode("proxy");
+    previousProxy.current = artifact.proxyId;
+  }, [artifact.proxyId]);
+  useEffect(() => { onTime(0); }, [artifact.id, onTime]);
+  useEffect(() => {
     const abort = new AbortController(); let objectUrl: string | null = null;
+    video.current?.pause();
     setUrl(null); setError(null); setPlayError(false);
+    if (limited) return () => abort.abort();
     void mediaBlob(path, abort.signal).then((blob: Blob) => {
       if (abort.signal.aborted) return;
       if (blob.size > BLOB_LIMIT) throw { code: "studio_blob_limit" };
       objectUrl = URL.createObjectURL(blob); setUrl(objectUrl);
     }).catch((failure: unknown) => { if (!abort.signal.aborted) setError(failure); });
     return () => { abort.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
-  }, [path, artifact.bytes, retry]);
+  }, [path, limited, retry]);
   useEffect(() => { if (!active) video.current?.pause(); }, [active]);
-  return <div className="studio-preview" aria-label={t("preview")}>
-    {artifact.bytes > BLOB_LIMIT ? <div className="studio-preview-message"><FileVideo size={28} /><p>{t("previewLimit")}</p></div>
+  useEffect(() => {
+    if (!seek) return;
+    position.current = seek.seconds; onTime(seek.seconds);
+    if (video.current && video.current.readyState >= 1) video.current.currentTime = seek.seconds;
+  }, [seek, onTime]);
+  function switchMode(next: "source" | "proxy") {
+    if (mode === next) return;
+    if (video.current) { position.current = video.current.currentTime; video.current.pause(); }
+    setMode(next);
+  }
+  return <>
+    <div className="studio-preview-toolbar"><div className="studio-preview-modes" role="group" aria-label={t("previewMode")}>
+      <button type="button" aria-pressed={!useProxy} onClick={() => switchMode("source")}>{t("source")}</button>
+      <button type="button" aria-pressed={useProxy} disabled={!artifact.proxyId} onClick={() => switchMode("proxy")}>{t("compatiblePreview")}</button>
+    </div><span className="studio-preview-availability">{t(proxyPending ? "proxyPending" : artifact.proxyId ? "proxyAvailable" : "proxyUnavailable")}</span></div>
+    <div className="studio-preview" aria-label={t(useProxy ? "compatiblePreview" : "preview")}>
+    {limited ? <div className="studio-preview-message"><FileVideo size={28} /><p>{t("previewLimit")}</p></div>
       : error ? <div className="studio-preview-message" role="alert"><CircleAlert size={24} /><p>{errorText(error)}</p><button className="button secondary" onClick={() => setRetry(value => value + 1)}>{t("retry")}</button></div>
-      : url ? <><video ref={video} src={url} controls preload="metadata" aria-label={artifact.filename} onError={() => setPlayError(true)} />{playError && <p className="studio-player-error" role="alert">{t("previewFailed")}</p>}</>
+      : url ? <><video key={url} ref={video} src={url} controls preload="metadata" aria-label={`${artifact.filename} · ${t(useProxy ? "compatiblePreview" : "source")}`} onLoadedMetadata={event => { const player = event.currentTarget; player.currentTime = Math.min(position.current, Number.isFinite(player.duration) ? player.duration : position.current); if (!active) player.pause(); }} onTimeUpdate={event => { if (event.currentTarget.readyState >= 1) { position.current = event.currentTarget.currentTime; onTime(position.current); } }} onError={() => setPlayError(true)} />{playError && <p className="studio-player-error" role="alert">{t("previewFailed")}</p>}</>
       : <div className="studio-preview-message" role="status"><LoaderCircle size={24} className="spinning" /><p>{t("previewLoading")}</p></div>}
-  </div>;
+    </div>
+    <div className="studio-proxy-action"><p>{t("previewUnedited")}</p><button type="button" className="text-button" disabled={busy || proxyPending || !toolsAvailable || !artifact.probe} onClick={createProxy}>{proxyPending ? <LoaderCircle size={13} className="spinning" /> : <RefreshCw size={13} />}{t(proxyPending ? "proxyPending" : artifact.proxyId ? "rebuildProxy" : "createProxy")}</button></div>
+    {!!proxyError && <p className="studio-inline-error" role="alert">{errorText(proxyError)}</p>}
+    {!toolsAvailable && <p className="studio-help">{t("proxyToolsRequired")}</p>}
+  </>;
 }
 
 interface PublishFields { title: string; description: string; visibility: "private" | "unlisted" | "public"; madeForKids: boolean; notifySubscribers: boolean }
@@ -309,96 +358,14 @@ function PublishForm({ artifact, account, t, busy, connected, submit }: { artifa
   </form>;
 }
 
-type EditFields = { inSeconds: string; outSeconds: string; crop: Edit["crop"]; gainDb: string; caption: string };
-const toFields = (edit: Edit): EditFields => ({ ...edit, inSeconds: String(edit.inSeconds), outSeconds: String(edit.outSeconds), gainDb: String(edit.gainDb) });
-function EditPanel({ artifact, context, tools, t, errorText, parentBusy, onExport }: { artifact: StudioArtifact; context: WorkspaceContext; tools: StudioSnapshot["tools"]; t: StudioTranslate; errorText: (e: unknown) => string; parentBusy: boolean; onExport: (expectedRevision: number) => void }) {
-  const duration = artifact.probe?.duration ?? 0;
-  const defaults: Edit = { inSeconds: 0, outSeconds: duration, crop: "original", gainDb: 0, caption: "" };
-  const [timeline, setTimeline] = useState<Timeline | null>(null);
-  const [fields, setFields] = useState<EditFields>(() => toFields(defaults));
-  const [baseline, setBaseline] = useState(() => JSON.stringify(toFields(defaults)));
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-  const [conflict, setConflict] = useState(false);
-  const [savedNotice, setSavedNotice] = useState(false);
-  const [reload, setReload] = useState(0);
-  const busyRef = useRef(false);
-  const abortRef = useRef(new AbortController());
-  const path = mediaPath(artifact.id, "timeline", context);
-  const dirty = baseline !== JSON.stringify(fields);
-  const disabled = loading || saving || parentBusy || !tools.available || !duration || conflict;
-  function accept(value: Timeline) {
-    const next = toFields(value.edits[value.cursor] ?? defaults);
-    setTimeline(value); setFields(next); setBaseline(JSON.stringify(next)); setConflict(false);
-  }
-  useEffect(() => {
-    const abort = new AbortController(); abortRef.current = abort;
-    setLoading(true); setError(null);
-    void request<Timeline>(path, "GET", undefined, abort.signal).then(value => {
-      if (!abort.signal.aborted) accept(value);
-    }).catch(failure => { if (!abort.signal.aborted) setError(failure); }).finally(() => { if (!abort.signal.aborted) setLoading(false); });
-    return () => abort.abort();
-  }, [path, reload]);
-  const edit: Edit = { inSeconds: Number(fields.inSeconds), outSeconds: Number(fields.outSeconds), crop: fields.crop, gainDb: Number(fields.gainDb), caption: fields.caption };
-  const valid = fields.inSeconds.trim() !== "" && fields.outSeconds.trim() !== "" && fields.gainDb.trim() !== "" && Number.isFinite(edit.inSeconds) && Number.isFinite(edit.outSeconds) && Number.isFinite(edit.gainDb) && edit.inSeconds >= 0 && edit.outSeconds > edit.inSeconds && edit.outSeconds <= duration && edit.gainDb >= -60 && edit.gainDb <= 24;
-  function change(key: keyof EditFields, value: string) { setSavedNotice(false); setFields(current => ({ ...current, [key]: value })); }
-  async function mutate(action: "save" | "undo" | "redo") {
-    if (!timeline || busyRef.current || disabled) return;
-    if (action === "save" && !valid) return;
-    busyRef.current = true; setSaving(true); setError(null); setSavedNotice(false);
-    const signal = abortRef.current.signal;
-    try {
-      const url = action === "save" ? path : `/api/media/${encodeURIComponent(artifact.id)}/timeline/${action}`;
-      const value = await request<Timeline>(url, action === "save" ? "PUT" : "POST", { context, expectedRevision: timeline.revision, ...(action === "save" ? { edit } : {}) }, signal);
-      if (!signal.aborted) { accept(value); setSavedNotice(true); }
-    } catch (failure) {
-      if (!signal.aborted) {
-        setError(failure);
-        if (failure && typeof failure === "object" && "code" in failure && /revision|conflict/.test(String(failure.code))) setConflict(true);
-      }
-    } finally { if (!signal.aborted) { busyRef.current = false; setSaving(false); } }
-  }
-  const start = valid && duration ? edit.inSeconds / duration * 100 : 0;
-  const end = valid && duration ? edit.outSeconds / duration * 100 : 0;
-  return <div className="studio-inspector-form">
-    {!tools.available && <div className="studio-callout"><strong>{t("toolsMissing")}</strong><p>{t("toolsHelp")}</p></div>}
-    {!duration && <p className="studio-help">{t("durationRequired")}</p>}
-    {loading ? <p className="studio-help" role="status">{t("loading")}</p> : <>
-      <form onSubmit={event => { event.preventDefault(); void mutate("save"); }}>
-        <fieldset className="studio-editor-fields" disabled={disabled || !timeline}><legend>{t("editorTitle")}</legend>
-          <div className="studio-form-pair"><label className="form-field">{t("trimIn")}<input type="number" min={0} max={duration} step="any" required value={fields.inSeconds} onChange={event => change("inSeconds", event.target.value)} /></label>
-            <label className="form-field">{t("trimOut")}<input type="number" min={0} max={duration} step="any" required value={fields.outSeconds} onChange={event => change("outSeconds", event.target.value)} /></label></div>
-          <div className="studio-timeline" aria-label={`${t("timeline")}: ${seconds(duration)}; ${t("selectedRange")}: ${valid ? `${seconds(edit.inSeconds)}–${seconds(edit.outSeconds)}` : "—"}`} role="img">
-            <div className="studio-timeline-track"><span style={{ left: `${start}%`, width: `${end - start}%` }} /></div><div className="studio-timeline-times"><span>00:00</span><span>{seconds(duration)}</span></div>
-          </div><p className="studio-help">{t("trimHelp")}</p>
-          <label className="form-field">{t("aspect")}<select value={fields.crop} onChange={event => change("crop", event.target.value)}>{(["original", "vertical", "square"] as const).map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>
-          <label className="form-field">{t("gain")}<input type="number" min={-60} max={24} step="any" required value={fields.gainDb} onChange={event => change("gainDb", event.target.value)} /></label>
-          <label className="form-field">{t("caption")}<textarea rows={3} maxLength={2000} value={fields.caption} onChange={event => change("caption", event.target.value)} /></label><p className="studio-help">{t("captionHelp")}</p>
-          {dirty && !valid && <p className="studio-inline-error">{t("invalidTrim")}</p>}
-          <div className="studio-edit-actions"><button className="button secondary" type="submit" disabled={!valid || !dirty && !!timeline?.edits.length}>{saving && <LoaderCircle size={13} className="spinning" />}{t("save")}</button>
-            <button className="icon-button" type="button" title={t("undo")} aria-label={t("undo")} disabled={!timeline || timeline.cursor < 0 || dirty} onClick={() => { void mutate("undo"); }}><RotateCcw size={16} /></button>
-            <button className="icon-button" type="button" title={t("redo")} aria-label={t("redo")} disabled={!timeline || timeline.cursor >= timeline.edits.length - 1 || dirty} onClick={() => { void mutate("redo"); }}><RotateCw size={16} /></button>
-          </div>
-        </fieldset>
-      </form>
-      {dirty ? <p className="studio-help">{t("unsaved")} · {t("saveBeforeExport")}</p> : savedNotice && <p className="studio-saved" role="status"><Check size={12} />{t("saved")}</p>}
-      <button className="button primary studio-full-width" disabled={disabled || !timeline || timeline.cursor < 0 || dirty} onClick={() => { if (timeline) onExport(timeline.revision); }}><Clapperboard size={15} />{t("export")}</button>
-      {timeline && timeline.cursor < 0 && !dirty && <p className="studio-help">{t("noEdits")}</p>}
-    </>}
-    {!!error && <div className="studio-inline-error" role="alert"><p>{errorText(error)}</p><button className="text-button" disabled={saving || parentBusy} onClick={() => setReload(value => value + 1)}>{t(conflict ? "refreshTimeline" : "retry")}</button></div>}
-    <p className="studio-help">{t("sourceSafe")}</p>
-  </div>;
-}
-
 function Progress({ value, label }: { value: number; label: string }) { return <div className="studio-progress"><progress max={100} value={percent(value)} aria-label={label} /><span>{percent(value)}%</span></div>; }
 function RenderList({ renders, artifacts, t, busy, errorText, open, cancel }: { renders: StudioRender[]; artifacts: StudioArtifact[]; t: StudioTranslate; busy: boolean; errorText: (e: unknown) => string; open: (id: string) => void; cancel: (render: StudioRender) => void }) {
   if (!renders.length) return null;
   return <section className="studio-renders"><h3>{t("renderJobs")}</h3>{renders.map(item => <div className="studio-render" key={item.id}>
-    <div className="studio-render-heading"><span className={`studio-state state-${item.state}`}>{item.state === "running" && <LoaderCircle size={12} className="spinning" />}{t(item.state)}</span>{item.state === "running" && <button className="text-button" disabled={busy} onClick={() => cancel(item)}>{t("cancel")}</button>}</div>
+    <div className="studio-render-heading"><strong className="studio-render-kind">{t(item.kind === "proxy" ? "compatiblePreview" : "exported")}</strong><span className={`studio-state state-${item.state}`}>{item.state === "running" && <LoaderCircle size={12} className="spinning" />}{t(item.state)}</span>{item.state === "running" && <button className="text-button" disabled={busy} onClick={() => cancel(item)}>{t("cancel")}</button>}</div>
     {item.state === "running" && <Progress value={item.progress} label={t("running")} />}
-    {item.error && <p className="studio-inline-error">{errorText(item.error)}</p>}
-    {item.state === "succeeded" && item.artifactId && artifacts.some(artifact => artifact.id === item.artifactId) && <button className="text-button" onClick={() => { if (item.artifactId) open(item.artifactId); }}>{t("openExport")}</button>}
+    {item.error && <p className="studio-inline-error">{item.kind === "proxy" ? t("proxyFailed") : errorText(item.error)}</p>}
+    {item.kind !== "proxy" && item.state === "succeeded" && item.artifactId && artifacts.some(artifact => artifact.id === item.artifactId && artifact.kind !== "proxy") && <button className="text-button" onClick={() => { if (item.artifactId) open(item.artifactId); }}>{t("openExport")}</button>}
   </div>)}</section>;
 }
 

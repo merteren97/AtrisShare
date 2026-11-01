@@ -12,6 +12,7 @@ import { migrate } from "./migrations.js";
 import type { YouTubeConnection } from "../../domain/src/youtube.js";
 import { channelIdSchema } from "../../domain/src/youtube.js";
 import { StudioStore } from "./studio-store.js";
+import { TranscriptStore } from "./transcript-store.js";
 
 type Row = Record<string, string | number | null>;
 const now = () => new Date().toISOString();
@@ -33,11 +34,13 @@ const memoryFrom = (r: Row): WorkspaceMemory => ({
 export class WorkspaceStore {
   private readonly db: DatabaseSync;
   readonly studio: StudioStore;
+  readonly transcripts: TranscriptStore;
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
     try { migrate(this.db); } catch (error) { this.db.close(); throw error; }
     this.studio = new StudioStore(this.db, scope => this.resolveContext(scope), (scope, action, id) => this.audit(scope, action, id));
+    this.transcripts = new TranscriptStore(this.db, scope => this.resolveContext(scope), (id, scope) => this.studio.artifact(id, scope));
   }
   close(): void { this.db.close(); }
   private transaction<T>(fn: () => T): T {
