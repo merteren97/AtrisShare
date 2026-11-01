@@ -41,7 +41,7 @@ non-overlapping kept ranges within outer bounds and real gap-removing concatenat
 Exports preserve a shared A/V origin and pad missing audio intervals, including audio offsets. Centered
 original/vertical/square crop, static caption, gain, revision-checked save,
 undo/redo branching, reopen and export progress/cancel are available. Retry starts
-a new export. Multi-track editing and timed captions are not implemented.
+a new export. Multi-track editing is not implemented; Phase 5 adds timed clip captions.
 
 **Phase 4 core feature implementation is complete:** an isolated OpenCode bridge,
 model selection, persistent reviewable edit proposals, local timestamped transcription
@@ -52,6 +52,16 @@ the required first real adapter; additional CLI adapters are future extensions.
 Windows has a custom titlebar and kill-on-close runtime ownership; the UI has no
 phase badges. Notifications, scheduling and other social connections remain planned.
 No signed installer is released.
+
+**Phase 5 clip discovery is implemented:** Studio → Clips offers local timestamped
+speech/scene/silence ranking, or explicitly opted-in OpenCode model ranking with
+rationales. Choose 2–180-second limits, inspect evidence, correct boundaries/static
+framing and timed captions, export multiple candidates and prepare private YouTube
+review drafts. Source/transcript hashes, account/project/destination and timeline
+revision are bound to persistent analyses. No face tracking or visual-model analysis;
+scores are editing hints. Real local media/UI checks and controlled AI ranking are
+engineering evidence; live model/Google acceptance remains at Phase 9.
+See [clip workflow and limits](docs/CLIPS.md).
 
 ## Planned workflow
 
@@ -206,9 +216,9 @@ worker queue remain planned.
 
 ## Roadmap and contributions
 
-Features through Phases 0–4 are implemented within their defined scope: Phase 3's
-limited editor and Phase 4's core features are complete. Automatic clipping,
-scheduling and additional platforms follow in Phases 5–7; Phase 8 covers hardening,
+Features through Phases 0–5 are implemented within their defined scope, including
+the limited editor, AI/transcription bridge and reviewed clip workflow.
+Scheduling and additional platforms follow in Phases 6–7; Phase 8 covers hardening,
 packaging and feature completion. **Phase 9 is the final live AI/YouTube and
 all-feature end-to-end acceptance gate for Phases 0–8.** Local regressions, builds
 and rendered/native UI checks continue as engineering evidence. Deferred acceptance

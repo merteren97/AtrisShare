@@ -173,7 +173,7 @@ export class StudioStore {
     const row = this.db.prepare("SELECT data,owner,lease_until FROM publications WHERE id=? AND account_id=? AND project_id=?").get(id, c.accountId, c.projectId) as Row | undefined;
     if (!row) throw new WorkspaceError(404, "publication_not_found"); return this.view(row);
   }
-  create(value: PublicationInput, destinationId: string): StudioPublication {
+  create(value: PublicationInput, destinationId: string, onCreate?: (publication: StudioPublication) => void): StudioPublication {
     const input = publicationInputSchema.parse(value);
     return this.transaction(() => {
       const a = this.artifact(input.artifactId, input.context);
@@ -183,7 +183,7 @@ export class StudioStore {
       const p: StudioPublication = { id: randomUUID(), context: input.context, revision: 1, payload, digest: publicationDigest(payload),
         state: "review", approvalExpiresAt: null, progress: 0, videoId: null, error: null, createdAt: new Date().toISOString() };
       this.db.prepare("INSERT INTO publications(id,account_id,project_id,artifact_id,data) VALUES(?,?,?,?,?)").run(p.id, input.context.accountId, input.context.projectId, a.id, JSON.stringify(p));
-      this.audit(p.context, "publication.requested", p.id); return p;
+      this.audit(p.context, "publication.requested", p.id); onCreate?.(p); return p;
     });
   }
   claim(id: string, scope: WorkspaceContext, owner: string, digest: string | null): StudioPublication {

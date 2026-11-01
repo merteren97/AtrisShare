@@ -106,7 +106,8 @@ are supported. Export creates a new artifact with progress/cancellation; retry i
 new export from the saved revision. Full-source/hash-linked H.264/AAC proxies,
 bounded to 1280×720 with rotation/aspect preserved, retain source-time playback.
 Neither proxy playback nor stored source playback renders unsaved edits. Multi-track
-and timed captions are absent. Inspection/export require external FFprobe/FFmpeg;
+is absent. Phase 5 adds [reviewed clips](CLIPS.md), timed clip captions and horizontal
+crop positioning. Inspection/export require external FFprobe/FFmpeg;
 see [media tooling](../packages/media-engine/README.md).
 
 The implemented Phase 4 AI/MCP tools can propose edits, render previews and run local

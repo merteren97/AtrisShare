@@ -14,6 +14,8 @@ console.log(JSON.stringify({
     "local whisper.cpp transcription with timestamped segments and explicit AI/MCP transcript opt-in",
     "encrypted in-app Google Desktop OAuth app configuration",
     "scoped MCP stdio, immutable edit proposals and human preview/accept/reject",
+    "source/transcript/revision-bound local clip discovery and optional consented OpenCode candidate ranking",
+    "reviewed clip boundaries, static framing, timed captions, sequential exports and private YouTube review drafts",
     "custom Windows titlebar and native runtime process-tree ownership"],
   liveYouTubeAcceptance: "pending",
   liveAiInferenceAcceptance: "pending",

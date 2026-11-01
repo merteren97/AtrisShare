@@ -39,8 +39,11 @@ Then the API verifies actual source bytes against the transcript hash and suppli
 at most **16,000 text characters / 150 segments**, including timestamps, language,
 duration, source hash and `truncated` metadata. No media bytes, frames or audio are
 supplied. Remote generation requires explicit request consent. Local speech
-processing is described in [media engine](../media-engine/README.md); automated clip
-discovery remains Phase 5 work.
+processing is described in [media engine](../media-engine/README.md). Phase 5 adds
+[reviewed clip discovery](../../docs/CLIPS.md) and `rankClips`: the same isolated
+JSONL lifecycle with a strict candidate-ID/rationale result schema. Clip ranking
+requires separate explicit text consent. Timed-caption text is omitted from
+metadata/current-timeline prompts and MCP timeline reads to preserve that boundary.
 
 The strict result is a summary and validated `MediaEdit`. The API persists local
 AtrisShare run/proposal history after temporary CLI transcript cleanup. Immutable

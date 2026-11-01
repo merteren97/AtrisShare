@@ -124,6 +124,16 @@ test("child environment excludes parent tokens, OAuth, ATRIS_SHARE_*, Node optio
   await cleaned(calls);
 });
 
+test("clip ranking uses the same isolated JSONL lifecycle with a strict ranking-only schema", async () => {
+  const ranking = { ranking: [{ id: "a339d924-c69f-45eb-82ca-c88b5f78e61c", reason: "Complete thought" }] };
+  const { bridge, calls } = fixture({ run: () => print(success(JSON.stringify(ranking))) });
+  assert.deepEqual(await bridge.rankClips({ model: MODEL, prompt: PROMPT }, signal()), { ...ranking, sessionId: SESSION });
+  await cleaned(calls);
+  const invalid = fixture();
+  await assert.rejects(invalid.bridge.rankClips({ model: MODEL, prompt: PROMPT }, signal()), code("ai_protocol_error"));
+  await cleaned(invalid.calls);
+});
+
 test("UTF-8 JSONL survives every byte split, CRLF and an unterminated final line", async () => {
   const wire = success().trimEnd().replaceAll("\n", "\r\n");
   const { bridge, calls } = fixture({ run: () => `const b=Buffer.from(${JSON.stringify(wire)});let i=0;const timer=setInterval(()=>{if(i===b.length){clearInterval(timer);return;}process.stdout.write(b.subarray(i,i+1));i++;},1);` });

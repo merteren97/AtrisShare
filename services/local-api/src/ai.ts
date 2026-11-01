@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import type { MediaEdit } from "../../../packages/domain/src/media.js";
 import { OpenCodeBridge } from "../../../packages/ai-bridge/src/opencode.js";
 import { aiProposalSchema, aiRequestSchema, aiScopeSchema, type AiRun } from "../../../packages/domain/src/ai.js";
 import { publicationInputSchema } from "../../../packages/domain/src/studio.js";
@@ -20,6 +21,11 @@ const cleanError = (error: unknown): string => error instanceof WorkspaceError ?
   : error instanceof Error && /^ai_[a-z_]+$/.test(error.message) ? error.message : "ai_process_failed";
 const stamp = () => new Date().toISOString();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
+const sanitizedEdit = (edit: MediaEdit) => ({ ...edit, caption: redactSensitiveText(edit.caption),
+  ...(edit.timedCaptions ? { timedCaptions: edit.timedCaptions.map(c => ({ ...c, text: redactSensitiveText(c.text) })) } : {}) });
+// Timed captions may contain locally recognized speech. Never disclose them through
+// the metadata/current-timeline path; transcript_read/context has its own consent.
+const metadataEdit = (edit: MediaEdit) => { const { timedCaptions, ...value } = edit; return { ...value, caption: redactSensitiveText(edit.caption) }; };
 export class AiService {
   private readonly bridge: Pick<OpenCodeBridge, "discover" | "propose">;
   private readonly owner = randomUUID();
@@ -90,7 +96,8 @@ export class AiService {
       rules: ["All times are source seconds. Range ends must not exceed source duration.", "If segments are supplied, inSeconds/outSeconds enclose them. Gaps remove footage.", "crop must be exactly original, vertical or square; gainDb between -60 and 24; caption max 2000 characters.", "No approval or publication authority. No media/audio/frame bytes are attached."],
       context: { account: redactSensitiveText(account.displayName), destinationId: run.destinationId, projectId: run.context.projectId,
         artifactId: artifact.id, filename: redactSensitiveText(artifact.filename), probe: artifact.probe,
-        baseRevision: run.baseRevision, currentEdit: current ? { ...current, caption: redactSensitiveText(current.caption) } : null },
+         baseRevision: run.baseRevision, currentEdit: current ? metadataEdit(current) : null,
+         timedCaptionCount: current?.timedCaptions?.length ?? 0 },
       confirmedNotes: run.includeMemory ? this.memory(run.context) : [], transcript: this.transcriptContext(run), request: run.prompt
     });
   }
@@ -118,7 +125,7 @@ export class AiService {
           this.store.studio.saveAiRun(run, this.owner);
         }, signal);
         signal.throwIfAborted();
-        const parsed = aiProposalSchema.safeParse({ summary: redactSensitiveText(result.summary), edit: { ...result.edit, caption: redactSensitiveText(result.edit.caption) } });
+        const parsed = aiProposalSchema.safeParse({ summary: redactSensitiveText(result.summary), edit: sanitizedEdit(result.edit) });
         if (!parsed.success) throw new WorkspaceError(400, "ai_invalid_proposal");
         const proposal = parsed.data;
         const { artifact } = this.scope({ context: run.context, artifactId: run.artifactId, destinationId: run.destinationId });
@@ -226,7 +233,11 @@ export class AiService {
         const a = this.store.studio.artifact(scope.artifactId, scope.context);
         return { id: a.id, filename: a.filename, sha256: a.sha256, bytes: a.bytes, probe: a.probe };
       }
-      if (input.tool === "timeline_read") return this.store.studio.timeline(scope.artifactId, scope.context);
+      if (input.tool === "timeline_read") {
+        const timeline = this.store.studio.timeline(scope.artifactId, scope.context);
+        return { ...timeline, edits: timeline.edits.map(metadataEdit),
+          ...(timeline.edits.some(e => e.timedCaptions?.length) ? { timedCaptionsOmitted: true } : {}) };
+      }
       return this.memory(scope.context);
     }
     if (input.tool === "timeline_propose") {
@@ -235,7 +246,7 @@ export class AiService {
       const artifact = this.store.studio.artifact(scope.artifactId, scope.context);
       if (run.baseRevision !== value.baseRevision) throw new WorkspaceError(409, "revision_conflict");
       if (!artifact.probe || value.edit.outSeconds > artifact.probe.duration) throw new WorkspaceError(400, "ai_invalid_proposal");
-      const sanitized = aiProposalSchema.safeParse({ summary: redactSensitiveText(value.summary), edit: { ...value.edit, caption: redactSensitiveText(value.edit.caption) } });
+      const sanitized = aiProposalSchema.safeParse({ summary: redactSensitiveText(value.summary), edit: sanitizedEdit(value.edit) });
       if (!sanitized.success) throw new WorkspaceError(400, "ai_invalid_proposal");
       run.state = "ready"; run.summary = sanitized.data.summary; run.edit = sanitized.data.edit;
       const created = this.store.studio.createAiRun(run, this.owner); grant.proposals.add(run.id); return created;

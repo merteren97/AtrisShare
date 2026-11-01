@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased — manual editor and Phase 4 core features
+## Unreleased — manual editor, AI bridge and reviewed clips
+
+- Phase 5 clip discovery: bounded local FFmpeg scene/silence and timestamped speech
+  evidence, optional source-edit overlap, deterministic scores and consented OpenCode
+  candidate-ID ranking/rationales. SQLite v6 scoped provenance, durable leases/cancel,
+  revision checks and source/transcript digests; no automatic retry or publication.
+- Studio Clips TR/EN review, configurable 2–180s limits/up to 8 candidates, source
+  context/partial-speech warnings, saved boundary/crop-position/timed-caption corrections,
+  sequential exports with per-candidate recovery and private YouTube review drafts.
+  Timed cues are literal, source-time, editable and fit-checked; no fabricated word
+  alignment/face tracking/visual-model analysis. AI/MCP metadata paths omit speech cues.
+  Shared render graphs use local script files for long cue lists on Windows.
 
 - Desktop OAuth with PKCE S256, one-use state, expected channel and Google subject verification.
 - Encrypted account credentials, refresh/re-verification, local disconnect and optional Google grant revocation.
@@ -20,7 +31,8 @@
 - Phase 3 limited manual-editor scope complete: trim/split/remove, 1–32 chronological non-overlapping kept
   ranges within outer bounds, actual gap-removing concat with shared A/V origin and silence padding including
   audio offsets; original/vertical/square crop, static caption and gain. Revision/CAS save, undo/redo branching,
-  reopen and export progress/cancel; retry creates a new export. No multi-track or timed captions.
+  reopen and export progress/cancel; retry creates a new export. No multi-track;
+  timed clip captions are added by Phase 5 above.
 - Source/hash-linked full-video H.264/AAC compatible proxies, at most 1280×720, preserving rotation/display
   aspect and source-time playback; source/proxy switching retains position. Proxies are not publication artifacts.
 - Phase 4 core feature implementation complete: safe native OpenCode discovery, currently verified 1.19.5 only
@@ -58,8 +70,8 @@
   exercised deterministic proposal/preview/human apply/manual undo; this was not LLM inference.
   This is local engineering evidence, not live provider or final all-feature acceptance. The first real OpenCode
   adapter is implemented; additional CLI adapters are future extensions, not incomplete Phase 0–4 obligations.
-  Automated clip analysis, notifications, scheduling and other connectors remain planned; no UI phase badges.
-- Updated delivery order: features through Phases 0–4 implemented within scope; Phase 3 limited editor complete,
+  Notifications, scheduling and other connectors remain planned; no UI phase badges.
+- Updated delivery order: features through Phases 0–5 implemented within scope; Phase 3 limited editor complete,
   Phase 4 core implementation complete. Phase 8 covers hardening, packaging and feature completion before new
   final Phase 9 live AI/YouTube and all-feature end-to-end acceptance for Phases 0–8 (`docs/ACCEPTANCE.md`).
   Local regressions/builds/rendered/native UI checks continue; deferred acceptance is not missing implementation.

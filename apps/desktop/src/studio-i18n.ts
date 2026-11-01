@@ -1,6 +1,7 @@
 export type StudioLanguage = "tr" | "en";
 
 const en = {
+  clips: "Clips", framing: "Horizontal framing · left → right",
   studio: "Studio", studioTitle: "Media studio", subtitle: "Prepare your media. Review every publication.", media: "Media", publishing: "Publishing", channel: "Channel",
   mediaCount: "media files", mediaCountOne: "media file", import: "Import video", importing: "Importing video…", refresh: "Refresh", retry: "Try again", loading: "Loading…",
   chooseProject: "Choose a project to open Studio", chooseProjectHelp: "Select a project in the workspace bar. Media and publications belong to that account and project.",
@@ -46,6 +47,7 @@ const en = {
 
 type StudioTextKey = keyof typeof en;
 const tr: Record<StudioTextKey, string> = {
+  clips: "Klipler", framing: "Yatay kadraj · sol → sağ",
   studio: "Stüdyo", studioTitle: "Medya stüdyosu", subtitle: "Medyanızı hazırlayın. Her yayını gözden geçirin.", media: "Medya", publishing: "Yayınlar", channel: "Kanal",
   mediaCount: "medya dosyası", mediaCountOne: "medya dosyası", import: "Video içe aktar", importing: "Video içe aktarılıyor…", refresh: "Yenile", retry: "Tekrar dene", loading: "Yükleniyor…",
   chooseProject: "Stüdyoyu açmak için bir proje seçin", chooseProjectHelp: "Çalışma alanı çubuğundan bir proje seçin. Medya ve yayınlar bu hesaba ve projeye aittir.",

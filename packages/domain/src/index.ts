@@ -6,6 +6,7 @@ export * from "./workspace.js";
 export * from "./youtube.js";
 export { aiScopeSchema, aiRequestSchema, aiProposalSchema, type AiRun } from "./ai.js";
 export { transcriptSchema, transcriptSegmentSchema, transcriptionErrorSchema, type Transcript, type TranscriptSegment } from "./transcription.js";
+export { clipOptionsSchema, clipRequestSchema, clipCorrectionSchema, clipRankingSchema, type ClipAnalysis, type ClipCandidate, type ClipSignals } from "./clips.js";
 export const SOCIAL_PLATFORMS = ["youtube", "x", "tiktok", "linkedin"] as const;
 export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
 export type IsoTimestamp = string;

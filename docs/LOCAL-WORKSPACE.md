@@ -23,7 +23,7 @@
   centered original/vertical/square crop, static caption and gain. CAS save,
   undo/redo branching, reopen and progress/cancel export; retry starts a new export.
   Full-source/hash-linked H.264/AAC proxies ≤1280×720 preserve rotation/aspect and
-  source-time playback. Multi-track and timed captions are absent.
+  source-time playback. Multi-track editing is absent; Phase 5 adds timed clip captions.
 - Phase 4 core features implemented: isolated OpenCode 1.19.5-only discovery,
   model selection, metadata/current-timeline + separately optional memory/transcript context,
   persistent bound proposals, human preview/accept/reject and durable cancellation.
@@ -34,6 +34,9 @@
   are future extensions, not incomplete Phase 0–4 obligations.
 - Custom Windows titlebar with drag/minimize/maximize/restore/close controls.
   User-facing phase badges are absent.
+- Reviewed clip discovery, local speech/scene/silence evidence, opt-in model ranking,
+  configurable limits, boundary/framing/timed-caption correction, sequential exports
+  and private YouTube review drafts. See [CLIPS](CLIPS.md) for API and recovery limits.
 
 ## Development commands
 
@@ -114,8 +117,9 @@ migration owner uses `user_version`, rejects newer schemas and serializes first
 initialization with `BEGIN IMMEDIATE`. Selection, projects, notes, audit, artifact
 metadata, timelines, renders, publications and transcripts survive restart. Managed bytes live
 under `media/`; v3 adds Studio tables, v4 adds durable AI runs/cancellation and v5
-adds transcripts with owner leases/cancellation while
-preserving earlier data. AtrisShare proposal/run history remains local; temporary
+adds transcripts with owner leases/cancellation; v6 adds scoped clip analyses,
+candidate corrections and batch/draft provenance while preserving earlier data.
+AtrisShare proposal/run history remains local; temporary
 CLI transcripts are removed rather than retained or resumed.
 
 Windows vault records use DPAPI **CurrentUser** encryption and atomic encrypted

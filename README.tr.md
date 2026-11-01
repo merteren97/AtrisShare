@@ -42,7 +42,7 @@ kaynak zamanıyla oynatma, kırpma/bölme/silme ve dış sınırlar içindeki 1�
 A/V zaman başlangıcı korunur; ses ofseti dahil eksik ses aralıkları sessizlikle doldurulur. Özgün/dikey/kare merkez
 kadraj, statik altyazı, ses kazancı, revizyon kontrollü kaydetme, dallanan geri al/yinele,
 yeniden açma ve ilerleme/iptal destekli dışa aktarma vardır. Tekrar deneme yeni çıktı
-başlatır. Çok kanallı kurgu ve zamanlı altyazı uygulanmadı.
+başlatır. Çok kanallı kurgu uygulanmadı; Aşama 5 zamanlı klip altyazılarını ekler.
 
 **Aşama 4 çekirdek özellik uygulaması tamamlandı:** izole OpenCode köprüsü, model seçimi,
 kalıcı ve incelenebilir düzenleme teklifleri, yerel zaman damgalı transkripsiyon ve
@@ -54,6 +54,16 @@ Windows'ta özel başlık
 çubuğu ve kapanışta runtime sahipliği vardır; UI'da aşama rozetleri yoktur.
 Bildirimler, zamanlayıcı ve diğer sosyal bağlantılar planlanır.
 İmzalı kurulum paketi yayınlanmadı.
+
+**Aşama 5 klip keşfi uygulandı:** Stüdyo → Klipler, yerel zaman damgalı konuşma/sahne/
+sessizlik sıralaması veya açık metin paylaşımı izniyle seçili OpenCode modelinden
+gerekçeli sıralama sunar. 2–180 saniye sınırlarını seç, kanıtı incele, başlangıç/bitişi,
+sabit kadrajı ve zamanlı altyazıları düzelt; birden fazla klibi dışa aktar ve gizli
+YouTube inceleme taslakları hazırla. Kalıcı analizler kaynak/transkript hash'ine,
+hesap/proje/hedefe ve timeline revizyonuna bağlıdır. Yüz takibi/görsel model analizi
+yoktur; puanlar kurgu ipucudur. Gerçek yerel medya/UI ve kontrollü AI çıktısı
+mühendislik kanıtıdır; canlı model/Google kabulü Aşama 9'da kalır.
+[Klip akışı ve sınırlar](docs/CLIPS.md).
 
 ## Planlanan kullanım akışı
 
@@ -208,9 +218,9 @@ kuyruğu planlanır.
 
 ## Yol haritası ve katkı
 
-Aşama 0–4 özellikleri tanımlı kapsamlarında uygulanmıştır: Aşama 3'ün sınırlı editörü
-ve Aşama 4'ün çekirdek özellikleri tamamdır. Otomatik klip çıkarma, zamanlayıcı ve
-diğer platformlar Aşama 5–7'de; sağlamlaştırma, paketleme ve özellik tamamlama Aşama
+Aşama 0–5 özellikleri tanımlı kapsamlarında uygulanmıştır: sınırlı editör, AI/transkript
+köprüsü ve incelenebilir klip akışı hazırdır. Zamanlayıcı ve
+diğer platformlar Aşama 6–7'de; sağlamlaştırma, paketleme ve özellik tamamlama Aşama
 8'dedir. **Aşama 9, Aşama 0–8'in canlı AI/YouTube ve tüm özellikleri kapsayan son
 uçtan uca kabul kapısıdır.** Yerel regresyon, derleme ve render/native UI kontrolleri
 mühendislik kanıtı olarak sürer. Ertelenen kabul, eksik özellik anlamına gelmez.

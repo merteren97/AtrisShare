@@ -1,6 +1,6 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 5;
+export const SCHEMA_VERSION = 6;
 export function migrate(db: DatabaseSync): void {
   // SQLite's documented table-rebuild procedure. Foreign keys are checked before
   // commit and re-enabled on every exit; no dependent rows are dropped.
@@ -109,6 +109,16 @@ export function migrate(db: DatabaseSync): void {
       ) STRICT;
       CREATE INDEX transcripts_scope ON transcripts(account_id,project_id,artifact_id);
       PRAGMA user_version=5;
+    `);
+    if (row.user_version < 6) db.exec(`
+      CREATE TABLE clip_analyses (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL, project_id TEXT NOT NULL, artifact_id TEXT NOT NULL,
+        data TEXT NOT NULL, owner TEXT NOT NULL, lease_until INTEGER NOT NULL,
+        cancel_requested INTEGER NOT NULL DEFAULT 0 CHECK(cancel_requested IN (0,1)),
+        FOREIGN KEY(artifact_id,account_id,project_id) REFERENCES artifacts(id,account_id,project_id)
+      ) STRICT;
+      CREATE INDEX clips_scope ON clip_analyses(account_id,project_id,artifact_id);
+      PRAGMA user_version=6;
     `);
     if (db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("Migration foreign key check failed");
     db.exec("COMMIT");

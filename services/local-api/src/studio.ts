@@ -56,14 +56,14 @@ export class StudioService {
     })();
     this.reads.add(operation); try { return await operation; } finally { this.reads.delete(operation); }
   }
-  async create(input: PublicationInput) {
+  async create(input: PublicationInput, onCreate?: (publication: StudioPublication) => void) {
     const value = publicationInputSchema.parse(input);
     const account = this.store.listAccounts().find(a => a.id === value.context.accountId);
     if (!account || account.platform !== "youtube" || account.status !== "connected") throw new WorkspaceError(409, "youtube_reauth_required");
     const artifact = this.store.studio.artifact(value.artifactId, value.context);
     if (artifact.kind === "proxy" || artifact.kind === "preview") throw new WorkspaceError(409, "media_proxy_not_publishable");
     if (!await this.engine.verify(artifact.id, artifact.sha256)) throw new WorkspaceError(409, "media_source_changed");
-    return this.store.studio.create(value, account.destinationId);
+    return this.store.studio.create(value, account.destinationId, onCreate);
   }
   private launch(id: string, work: (signal: AbortSignal) => Promise<void>) {
     if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
@@ -197,14 +197,20 @@ export class StudioService {
     return this.startRender(id, context, "proxy", null, 0);
   }
   renderCandidate(id: string, context: WorkspaceContext, edit: MediaEdit, expectedRevision: number, sha256: string): StudioRender {
+    return this.checkedCandidate(id, context, edit, expectedRevision, sha256, "preview");
+  }
+  renderClip(id: string, context: WorkspaceContext, edit: MediaEdit, expectedRevision: number, sha256: string): StudioRender {
+    return this.checkedCandidate(id, context, { ...edit, segments: [{ inSeconds: edit.inSeconds, outSeconds: edit.outSeconds }] }, expectedRevision, sha256, "export", `clip-${edit.inSeconds.toFixed(2)}-${edit.outSeconds.toFixed(2)}`);
+  }
+  private checkedCandidate(id: string, context: WorkspaceContext, edit: MediaEdit, expectedRevision: number, sha256: string, kind: "preview" | "export", suffix?: string): StudioRender {
     const artifact = this.store.studio.artifact(id, context);
     if (artifact.sha256 !== sha256) throw new WorkspaceError(409, "media_source_changed");
     if (this.store.studio.timeline(id, context).revision !== expectedRevision) throw new WorkspaceError(409, "revision_conflict");
     const value = editSchema.parse(edit);
     if (!artifact.probe || value.outSeconds > artifact.probe.duration + .001) throw new WorkspaceError(400, "timeline_bounds");
-    return this.startRender(id, context, "preview", value, expectedRevision);
+    return this.startRender(id, context, kind, value, expectedRevision, suffix);
   }
-  private startRender(id: string, context: WorkspaceContext, kind: "export" | "proxy" | "preview", edit: MediaEdit | null, revision: number): StudioRender {
+  private startRender(id: string, context: WorkspaceContext, kind: "export" | "proxy" | "preview", edit: MediaEdit | null, revision: number, suffix?: string): StudioRender {
     if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
     if ([...this.tasks.keys()].some(key => key.startsWith("render:"))) throw new WorkspaceError(409, "media_busy");
     const artifact = this.store.studio.artifact(id, context);
@@ -229,7 +235,7 @@ export class StudioService {
         signal.throwIfAborted();
         if (!await this.engine.verify(id, artifact.sha256, signal)) throw new WorkspaceError(409, "media_source_changed");
         signal.throwIfAborted();
-        this.store.studio.addArtifact({ ...result, filename: `${artifact.filename.replace(/\.[^.]+$/, "")}-${kind === "export" ? `edit-r${revision}` : kind}.mp4`, accountId: context.accountId, projectId: context.projectId!,
+        this.store.studio.addArtifact({ ...result, filename: `${artifact.filename.replace(/\.[^.]+$/, "")}-${suffix ? `${suffix}-${render.id.slice(0, 6)}` : kind === "export" ? `edit-r${revision}` : kind}.mp4`, accountId: context.accountId, projectId: context.projectId!,
           kind, sourceId: id, sourceSha256: artifact.sha256, channelVideoId: artifact.channelVideoId, createdAt: new Date().toISOString() });
         registered = true;
         if (kind === "proxy") this.store.studio.attachProxy(id, context, outputId, artifact.sha256);
@@ -247,6 +253,10 @@ export class StudioService {
     const render = this.store.studio.render(id, context), task = this.tasks.get(`render:${id}`);
     if (render.state !== "running" || !task) throw new WorkspaceError(409, "render_not_running");
     task.abort.abort(); return render;
+  }
+  async waitForRender(id: string, context: WorkspaceContext) {
+    await this.tasks.get(`render:${id}`)?.promise;
+    return this.store.studio.render(id, context);
   }
   async catalog(accountId: string, destinationId: string, pageToken: string | null) {
     return this.youtube.withVerified({ accountId, destinationId }, (token, signal) => this.publisher.catalog(token, destinationId, pageToken, signal));

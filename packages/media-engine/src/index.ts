@@ -7,6 +7,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { editSchema, mediaProbeSchema } from "../../domain/src/media.js";
 import type { MediaEdit, MediaProbe } from "../../domain/src/media.js";
+import type { ClipSignals } from "../../domain/src/clips.js";
 
 const MAX_BYTES = 2 * 1024 ** 3;
 const MAX_TIME = 30 * 60 * 1000;
@@ -416,6 +417,34 @@ export class MediaEngine {
     return this.probeFile(path, await containerOf(path, signal), signal);
   }
 
+  /** Local, low-resolution scene cuts and silence intervals, in the source clock.
+   * These are editing hints, not semantic/face/virality detection. No bytes leave the host.
+   */
+  async analyze(id: string, signal: AbortSignal): Promise<ClipSignals> {
+    const source = await this.existing(id), container = await containerOf(source, signal);
+    const probe = await this.probeFile(source, container, signal);
+    if (probe.duration > 7200) throw new Error("clip_duration_limit");
+    const common = ["-hide_banner", "-nostdin", "-v", "error", ...this.inputArgs(container), "-threads", "2", "-i", source];
+    const text = await this.run("ffmpeg", [...common, "-an", "-vf",
+      "scale=320:-2,fps=2,select='gt(scene,0.3)',metadata=mode=print:file=-", "-filter_threads", "2", "-f", "null", "-"], { signal });
+    const scenes = [...text.matchAll(/pts_time:([\d.e+-]+)/gu)].map(m => Number(m[1]))
+      .filter(t => Number.isFinite(t) && t >= 0 && t <= probe.duration).slice(0, 5000);
+    const silences: ClipSignals["silences"] = [];
+    if (probe.hasAudio) {
+      const audio = await this.run("ffmpeg", [...common, "-vn", "-af",
+        "aresample=async=1:first_pts=0,silencedetect=noise=-35dB:d=0.35:mono=0,ametadata=mode=print:file=-", "-f", "null", "-"], { signal });
+      let start: number | null = null;
+      for (const match of audio.matchAll(/lavfi\.silence_(start|end)=([\d.e+-]+)/gu)) {
+        const time = Math.min(probe.duration, Math.max(0, Number(match[2])));
+        if (!Number.isFinite(time)) throw new Error("clip_invalid_signals");
+        if (match[1] === "start") start = time;
+        else if (start !== null) { if (time > start) silences.push({ start, end: time }); start = null; }
+      }
+      if (start !== null && start < probe.duration) silences.push({ start, end: probe.duration });
+    }
+    signal.throwIfAborted(); return { scenes, silences };
+  }
+
   async render(sourceId: string, outputId: string, edit: MediaEdit, onProgress: (p: number) => void, signal: AbortSignal): Promise<MediaResult> {
     sourceId = mediaId(sourceId); outputId = mediaId(outputId);
     if (sourceId === outputId) throw new Error("media_source_is_immutable");
@@ -436,9 +465,21 @@ export class MediaEngine {
     const segments = edit.segments;
     const duration = segments ? segments.reduce((sum, segment) => sum + segment.outSeconds - segment.inSeconds, 0)
       : edit.outSeconds - edit.inSeconds;
-    const filters = [`crop=${width}:${height}:(iw-ow)/2:(ih-oh)/2`, "setsar=1"];
+    const filters = [`crop=${width}:${height}:(iw-ow)*${edit.cropX ?? .5}:(ih-oh)/2`, "setsar=1"];
     if (caption) {
       filters.push(`drawtext=textfile=caption.txt:expansion=none:fontcolor=white:fontsize=${caption.fontSize}:line_spacing=${caption.spacing}:box=1:boxcolor=black@0.6:boxborderw=${caption.border}:x=(w-text_w)/2:y=h-text_h-${caption.margin + caption.border}`);
+    }
+    const cueFiles: { name: string; text: string }[] = [];
+    let outputStart = 0;
+    for (const range of segments ?? [{ inSeconds: edit.inSeconds, outSeconds: edit.outSeconds }]) {
+      for (const cue of edit.timedCaptions ?? []) {
+        const start = Math.max(range.inSeconds, cue.start), end = Math.min(range.outSeconds, cue.end);
+        if (end <= start) continue;
+        const layout = captionLayout(cue.text, width, height), name = `cue-${cueFiles.length}.txt`;
+        cueFiles.push({ name, text: layout.text });
+        filters.push(`drawtext=textfile=${name}:expansion=none:fontcolor=white:fontsize=${layout.fontSize}:line_spacing=${layout.spacing}:box=1:boxcolor=black@0.6:boxborderw=${layout.border}:x=(w-text_w)/2:y=h-text_h-${layout.margin + layout.border}:enable='gte(t,${outputStart + start - range.inSeconds})*lt(t,${outputStart + end - range.inSeconds})'`);
+      }
+      outputStart += range.outSeconds - range.inSeconds;
     }
     let args: string[];
     if (segments) {
@@ -468,7 +509,7 @@ export class MediaEngine {
         ...(probe.hasAudio ? ["-map", "0:a:0", "-af", `volume=${edit.gainDb}dB`] : ["-an"]), "-vf", filters.join(",")];
     }
     return this.encode(outputId, destination, container, args, { duration, width, height, hasAudio: probe.hasAudio },
-      onProgress, signal, ".render-", caption?.text);
+      onProgress, signal, ".render-", caption?.text, cueFiles);
   }
 
   /** Full-source playback proxy. Source seconds map directly to proxy seconds. */
@@ -491,7 +532,7 @@ export class MediaEngine {
   }
 
   private async encode(outputId: string, destination: string, container: Container, args: string[], expected: MediaProbe,
-    onProgress: (p: number) => void, signal: AbortSignal, prefix: string, caption?: string): Promise<MediaResult> {
+    onProgress: (p: number) => void, signal: AbortSignal, prefix: string, caption?: string, cueFiles: { name: string; text: string }[] = []): Promise<MediaResult> {
     const workspace = await mkdtemp(join(this.directory, prefix));
     const temporary = join(workspace, "output.mp4");
     let progress = -1, pending = "";
@@ -503,6 +544,14 @@ export class MediaEngine {
     };
     try {
       if (caption) await writeFile(join(workspace, "caption.txt"), caption, { flag: "wx", mode: 0o600 });
+      for (const file of cueFiles) await writeFile(join(workspace, file.name), file.text, { flag: "wx", mode: 0o600 });
+      // Keep long cue/concat graphs out of Windows' command-line length limit.
+      if (cueFiles.length) {
+        const at = args.findIndex(arg => arg === "-vf" || arg === "-filter_complex");
+        if (at < 0 || !args[at + 1]) throw new Error("media_render_incomplete");
+        await writeFile(join(workspace, "filters.txt"), args[at + 1]!, { flag: "wx", mode: 0o600 });
+        args = [...args]; args[at] = args[at] === "-vf" ? "-filter_script:v" : "-filter_complex_script"; args[at + 1] = "filters.txt";
+      }
       report(0);
       await this.run("ffmpeg", ["-hide_banner", "-nostdin", "-loglevel", "error", "-max_alloc", "268435456",
         ...this.inputArgs(container), "-threads", "2", ...args,

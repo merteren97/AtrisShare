@@ -26,10 +26,18 @@ export const editSchema = z.object({
   crop: z.enum(["original", "vertical", "square"]),
   gainDb: z.number().finite().min(-60).max(24),
   caption: z.string().max(2000).regex(/^[^\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]*$/u),
+  cropX: z.number().finite().min(0).max(1).optional(),
+  timedCaptions: z.array(z.object({ start: z.number().finite().nonnegative(), end: z.number().finite().positive(),
+    text: z.string().min(1).max(300).regex(/^[^\u0000-\u001f\u007f]*$/u) }).strict()).max(100).optional(),
   segments: z.array(segmentSchema).min(1).max(32).optional()
 }).strict().refine(edit => edit.outSeconds > edit.inSeconds, {
   message: "outSeconds must be after inSeconds", path: ["outSeconds"]
 }).superRefine((edit, context) => {
+  for (const [i, cue] of (edit.timedCaptions ?? []).entries()) {
+    if (cue.end <= cue.start || (i > 0 && cue.start < edit.timedCaptions![i - 1]!.end)) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "captions must be ordered, non-overlapping source seconds", path: ["timedCaptions", i] });
+    }
+  }
   for (const [index, segment] of (edit.segments ?? []).entries()) {
     if (segment.inSeconds < edit.inSeconds || segment.outSeconds > edit.outSeconds) {
       context.addIssue({ code: z.ZodIssueCode.custom, message: "segment must be within the source envelope", path: ["segments", index] });

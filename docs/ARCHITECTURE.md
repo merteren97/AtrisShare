@@ -10,7 +10,7 @@ Phase 3's limited manual editor is implemented, including split/kept ranges and
 full-source proxies. Phase 4 core feature implementation is complete: the required
 first real OpenCode adapter, scoped stdio MCP, local timestamped transcription and
 explicit transcript disclosure consent. Additional CLI adapters are future extensions;
-automated clip analysis belongs to Phase 5. Multi-track/timed captions, standalone
+Phase 5 adds reviewed clip discovery and timed captions. Multi-track editing, standalone
 queues and scheduling are not implemented. Live AI and all-feature end-to-end
 acceptance for Phases 0–8 are consolidated at final Phase 9 after Phase 8 hardening,
 packaging and feature completion; local checks continue as engineering evidence.
@@ -104,7 +104,8 @@ Centered original/vertical/square crop, static caption and gain apply globally.
 Save/undo/redo use optimistic revision CAS and branch replacement; reopening loads
 the saved cursor/history. Export captures a saved revision and reports progress/
 cancellation; retry starts a new export. Expired running-render leases surface
-interruption, not automatic resume. Multi-track and timed captions are absent.
+interruption, not automatic resume. Multi-track editing is absent; timed captions
+and horizontal crop positioning are optional shared-schema additions in Phase 5.
 
 Full-source compatible proxies are separate source/hash-linked artifacts, H.264/
 yuv420p + AAC when audio exists, at most **1280×720** without upscaling. Rotation
@@ -186,9 +187,22 @@ Prior local Windows native checks discovered nine routes from installed OpenCode
 undo with unchanged source bytes. No live LLM inference or YouTube acceptance was
 performed, and no secrets were provided. These are local engineering checks, not
 final Phase 9 acceptance or a reason to mark Phase 4 core incomplete. Additional CLI
-adapters are future extensions. Future clip discovery needs timestamped
-transcript/scene/audio evidence and explained candidates. Channel listing still
+adapters are future extensions. Implemented clip discovery uses timestamped
+transcript/scene/silence evidence and explained candidates. Channel listing still
 does not supply source footage or downloading rights.
+
+### Clip discovery (Phase 5)
+
+`ClipService` orchestrates local FFmpeg scene/silence signals and language-neutral
+speech/duration/boundary scoring; an explicit text opt-in enables the same isolated
+OpenCode bridge's strict candidate-ID ranking contract. SQLite v6 scoped analyses
+bind source/transcript digests, base timeline revision, model/session/options and
+actual evidence. Candidate corrections use CAS; sequential shared-pipeline renders
+produce independent immutable exports. Review-draft creation and attachment are
+transactional. Durable leases/cancellation prevent late job resurrection; interrupted
+work needs a new explicit run. Static crop positioning and source-time timed cues
+are additive optional edit fields. Metadata prompts/MCP timeline reads omit timed
+caption text so speech cannot bypass transcript consent. See [CLIPS](CLIPS.md).
 
 ## Publication lifecycle
 

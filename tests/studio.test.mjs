@@ -202,7 +202,7 @@ test("v2 to v3 migration preserves connected identities, credentials references 
   for (let reopen = 0; reopen < 2; reopen++) {
     const store = new WorkspaceStore(path), inspection = new DatabaseSync(path);
     try {
-      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 5);
+      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 6);
       assert.deepEqual(tables.map(table => inspection.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), before);
       assert.deepEqual(inspection.prepare("PRAGMA foreign_key_check").all(), []);
       assert.equal(store.getYouTubeConnection(accountId, destination).revision, 7);

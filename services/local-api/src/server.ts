@@ -20,6 +20,8 @@ import { aiRequestSchema, aiScopeSchema } from "../../../packages/domain/src/ai.
 import { AiService, type AiOptions } from "./ai.js";
 import { TranscriptionService, type TranscriptionOptions } from "./transcription.js";
 import { googleDesktopClientSchema } from "./youtube-provider.js";
+import { ClipService, type ClipOptions } from "./clips.js";
+import { clipCorrectionSchema, clipRequestSchema } from "../../../packages/domain/src/clips.js";
 
 export interface ApiOptions {
   dataDirectory?: string;
@@ -34,10 +36,11 @@ export interface ApiOptions {
   studio?: StudioOptions;
   ai?: AiOptions;
   transcription?: TranscriptionOptions;
+  clips?: ClipOptions;
 }
 export const NATIVE_ORIGINS = ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
 const MAX_BODY = 32 * 1024;
-async function body(request: IncomingMessage): Promise<unknown> {
+async function body(request: IncomingMessage, limit = MAX_BODY): Promise<unknown> {
   const contentType = request.headers["content-type"]?.split(";")[0]?.trim();
   if (contentType !== "application/json") throw new WorkspaceError(415, "json_required");
   return new Promise((resolve, reject) => {
@@ -45,11 +48,11 @@ async function body(request: IncomingMessage): Promise<unknown> {
     let length = 0;
     request.on("data", (chunk: Buffer) => {
       length += chunk.length;
-      if (length > MAX_BODY) { chunks.length = 0; reject(new WorkspaceError(413, "body_too_large")); }
+      if (length > limit) { chunks.length = 0; reject(new WorkspaceError(413, "body_too_large")); }
       else chunks.push(chunk);
     });
     request.on("end", () => {
-      if (length > MAX_BODY) return;
+      if (length > limit) return;
       try { resolve(JSON.parse(Buffer.concat(chunks).toString("utf8")) as unknown); }
       catch { reject(new WorkspaceError(400, "invalid_json")); }
     });
@@ -79,6 +82,7 @@ export async function startApi(options: ApiOptions = {}) {
   const studio = new StudioService(store, youtube, credentialVault, directory, options.studio);
   const transcription = new TranscriptionService(store, studio, options.transcription);
   const ai = new AiService(store, studio, { ...options.ai, transcription });
+  const clips = new ClipService(store, studio, transcription, options.clips);
   let origin = "";
   let closePromise: Promise<void> | undefined;
   const send = (response: ServerResponse, status: number, payload: unknown) => {
@@ -169,6 +173,27 @@ export async function startApi(options: ApiOptions = {}) {
         if (url.pathname.endsWith("/cancel")) send(response, 200, await ai.cancel(id, input.context));
         else if (url.pathname.endsWith("/preview")) send(response, 202, ai.preview(id, input.context));
         else send(response, 200, await ai.review(id, input.context, url.pathname.endsWith("/accept") ? "accept" : "reject"));
+      } else if (route === "GET /api/clips") {
+        send(response, 200, clips.list(idSchema.parse(url.searchParams.get("artifactId")), queryContext(url)));
+      } else if (route === "POST /api/clips") {
+        send(response, 202, await clips.start(clipRequestSchema.parse(await body(request))));
+      } else if (request.method === "PUT" && /^\/api\/clips\/[^/]+$/.test(url.pathname)) {
+        send(response, 200, await clips.correct(idSchema.parse(url.pathname.split("/")[3]), clipCorrectionSchema.parse(await body(request, 128 * 1024))));
+      } else if (request.method === "POST" && /^\/api\/clips\/[^/]+\/(cancel|render|draft|captions)$/.test(url.pathname)) {
+        const id = idSchema.parse(url.pathname.split("/")[3]);
+        const base = z.object({ context: studioContextSchema });
+        if (url.pathname.endsWith("/cancel")) {
+          const input = base.strict().parse(await body(request)); send(response, 200, await clips.cancel(id, input.context));
+        } else if (url.pathname.endsWith("/captions")) {
+          const input = base.extend({ candidateId: idSchema, start: z.number().finite(), end: z.number().finite() }).strict().parse(await body(request));
+          send(response, 200, clips.captions(id, input.context, input.candidateId, input.start, input.end));
+        } else if (url.pathname.endsWith("/render")) {
+          const input = base.extend({ expectedRevision: z.number().int().nonnegative(), candidateIds: z.array(idSchema).min(1).max(8) }).strict().parse(await body(request));
+          send(response, 202, await clips.render(id, input.context, input.expectedRevision, input.candidateIds));
+        } else {
+          const input = base.extend({ expectedRevision: z.number().int().nonnegative(), candidateId: idSchema, title: publicationInputSchema.shape.title }).strict().parse(await body(request));
+          send(response, 201, await clips.draft(id, input.context, input.expectedRevision, input.candidateId, input.title));
+        }
       } else if (route === "POST /api/media/import") {
         if (Number(request.headers["content-length"] ?? 0) > 2 * 1024 ** 3) throw new WorkspaceError(413, "body_too_large");
         const filename = z.string().min(1).max(240).parse(url.searchParams.get("filename"));
@@ -262,7 +287,7 @@ export async function startApi(options: ApiOptions = {}) {
    server.requestTimeout = 30 * 60_000; // bounded 2 GiB media streaming; JSON keeps its small size limit.
   server.headersTimeout = 10_000;
   function close(): Promise<void> {
-    closePromise ??= Promise.all([ai.close(), transcription.close(), studio.close(), youtube.close()]).then(() => new Promise<void>((resolve, reject) => {
+    closePromise ??= clips.close().then(() => Promise.all([ai.close(), transcription.close(), studio.close(), youtube.close()])).then(() => new Promise<void>((resolve, reject) => {
       server.close(error => { store.close(); if (error) reject(error); else resolve(); });
       server.closeIdleConnections();
     }));

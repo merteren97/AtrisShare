@@ -8,7 +8,7 @@ import type { StudioTranslate } from "./studio-i18n";
 
 interface Timeline { revision: number; cursor: number; edits: MediaEdit[] }
 interface RangeFields { inSeconds: string; outSeconds: string }
-interface EditFields { segments: RangeFields[]; crop: MediaEdit["crop"]; gainDb: string; caption: string }
+interface EditFields { segments: RangeFields[]; crop: MediaEdit["crop"]; gainDb: string; caption: string; cropX: number }
 interface EditPanelProps {
   artifact: StudioArtifact; context: WorkspaceContext; tools: { available: boolean }; t: StudioTranslate;
   errorText: (e: unknown) => string; parentBusy: boolean; reloadKey: number;
@@ -20,7 +20,7 @@ function time(value: number) {
   return `${Math.floor(hundredths / 6000).toString().padStart(2, "0")}:${(Math.floor(hundredths / 100) % 60).toString().padStart(2, "0")}.${(hundredths % 100).toString().padStart(2, "0")}`;
 }
 function toFields(edit: MediaEdit): EditFields {
-  return { segments: (edit.segments ?? [{ inSeconds: edit.inSeconds, outSeconds: edit.outSeconds }]).map(range => ({ inSeconds: String(range.inSeconds), outSeconds: String(range.outSeconds) })), crop: edit.crop, gainDb: String(edit.gainDb), caption: edit.caption };
+  return { segments: (edit.segments ?? [{ inSeconds: edit.inSeconds, outSeconds: edit.outSeconds }]).map(range => ({ inSeconds: String(range.inSeconds), outSeconds: String(range.outSeconds) })), crop: edit.crop, gainDb: String(edit.gainDb), caption: edit.caption, cropX: edit.cropX ?? .5 };
 }
 
 export function EditPanel({ artifact, context, tools, t, errorText, parentBusy, reloadKey, sourceTime, onSeek, onExport }: EditPanelProps) {
@@ -83,7 +83,7 @@ export function EditPanel({ artifact, context, tools, t, errorText, parentBusy, 
     busyRef.current = true; setSaving(true); setError(null); setSavedNotice(false);
     const signal = abortRef.current.signal;
     try {
-      const edit: MediaEdit = { inSeconds: ranges[0]!.inSeconds, outSeconds: ranges[ranges.length - 1]!.outSeconds, segments: ranges, crop: fields.crop, gainDb: Number(fields.gainDb), caption: fields.caption };
+      const edit: MediaEdit = { ...(timeline.edits[timeline.cursor] ?? defaults), inSeconds: ranges[0]!.inSeconds, outSeconds: ranges[ranges.length - 1]!.outSeconds, segments: ranges, crop: fields.crop, cropX: fields.cropX, gainDb: Number(fields.gainDb), caption: fields.caption };
       const url = action === "save" ? path : `/api/media/${encodeURIComponent(artifact.id)}/timeline/${action}`;
       const value = await request<Timeline>(url, action === "save" ? "PUT" : "POST", { context, expectedRevision: timeline.revision, ...(action === "save" ? { edit } : {}) }, signal);
       if (!signal.aborted) { accept(value); setSavedNotice(true); }
@@ -120,6 +120,7 @@ export function EditPanel({ artifact, context, tools, t, errorText, parentBusy, 
           <p className="studio-help">{t(ranges.length >= 32 ? "rangeLimit" : "rangesHelp")}</p>
           <details className="studio-global-settings" open><summary>{t("globalSettings")}</summary>
             <label className="form-field">{t("aspect")}<select value={fields.crop} onChange={event => change({ ...fields, crop: event.target.value as MediaEdit["crop"] })}>{(["original", "vertical", "square"] as const).map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>
+            <label className="form-field">{t("framing")}<input type="range" min={0} max={1} step={.01} value={fields.cropX} onChange={event => change({ ...fields, cropX: +event.target.value })} /></label>
             <label className="form-field">{t("gain")}<input type="number" min={-60} max={24} step="any" required value={fields.gainDb} onChange={event => change({ ...fields, gainDb: event.target.value })} /></label>
             <label className="form-field">{t("caption")}<textarea rows={2} maxLength={2000} value={fields.caption} onChange={event => change({ ...fields, caption: event.target.value })} /></label><p className="studio-help">{t("captionHelp")}</p>
           </details>

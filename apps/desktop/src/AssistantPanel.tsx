@@ -326,10 +326,12 @@ function EditComparison({ current, proposed, t, language }: { current: MediaEdit
     { key: "gain", before: `${number(current.gainDb)} dB`, after: `${number(proposed.gainDb)} dB`, changed: current.gainDb !== proposed.gainDb },
     { key: "caption", before: current.caption || t("emptyCaption"), after: proposed.caption || t("emptyCaption"), changed: current.caption !== proposed.caption },
     { key: "kept", before: number(kept(current)), after: number(kept(proposed)), changed: kept(current) !== kept(proposed) },
+    { key: "framing", before: `${number((current.cropX ?? .5) * 100)}%`, after: `${number((proposed.cropX ?? .5) * 100)}%`, changed: (current.cropX ?? .5) !== (proposed.cropX ?? .5) },
   ] as const;
   return <div className="assistant-diff"><div className="assistant-diff-labels"><span>{t("current")}</span><span>{t("proposed")}</span></div>
     {rows.map(row => <div className={`assistant-diff-row ${row.changed ? "is-changed" : ""}`} key={row.key}><strong>{t(row.key)} <span>{t(row.changed ? "changed" : "unchanged")}</span></strong><div><p>{row.before}</p><p>{row.after}</p></div></div>)}
     <div className={`assistant-diff-row ${JSON.stringify(ranges(current)) !== JSON.stringify(ranges(proposed)) ? "is-changed" : ""}`}><strong>{t("segments")}</strong><div>{[current, proposed].map((edit, index) => <ol key={index} aria-label={`${t(index === 0 ? "current" : "proposed")} · ${t("segments")}`}>{ranges(edit).map((range, i) => <li key={i}><span>{sourceTime(range.inSeconds)} → {sourceTime(range.outSeconds)}</span></li>)}</ol>)}</div></div>
+    {!!(current.timedCaptions?.length || proposed.timedCaptions?.length) && <div className={`assistant-diff-row ${JSON.stringify(current.timedCaptions ?? []) !== JSON.stringify(proposed.timedCaptions ?? []) ? "is-changed" : ""}`}><strong>{t("timedCaptions")}</strong><div>{[current, proposed].map((edit, index) => <ol key={index} aria-label={`${t(index === 0 ? "current" : "proposed")} · ${t("timedCaptions")}`}>{edit.timedCaptions?.map((cue, i) => <li key={i}><span>{sourceTime(cue.start)} → {sourceTime(cue.end)}</span><p>{cue.text}</p></li>)}</ol>)}</div></div>}
   </div>;
 }
 

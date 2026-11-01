@@ -6,6 +6,7 @@ import { binaryRequest, mediaBlob, request } from "./api";
 import { studioError, studioText, type StudioLanguage, type StudioTranslate } from "./studio-i18n";
 import { EditPanel } from "./TimelineEditor";
 import { AssistantPanel } from "./AssistantPanel";
+import { ClipPanel } from "./ClipPanel";
 import "./studio.css";
 
 export interface StudioArtifact {
@@ -55,7 +56,7 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
   const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [tab, setTab] = useState<"media" | "publishing" | "channel">("media");
-  const [inspector, setInspector] = useState<"publish" | "edit" | "assistant">("edit");
+  const [inspector, setInspector] = useState<"publish" | "edit" | "assistant" | "clips">("edit");
   const [timelineEpoch, setTimelineEpoch] = useState(0);
   const [sourceTime, setSourceTime] = useState(0);
   const [seek, setSeek] = useState<{ artifactId: string; seconds: number; sequence: number } | null>(null);
@@ -219,8 +220,8 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
             </> : <div className="studio-preview-empty"><div className="studio-empty-frame"><Clapperboard size={38} strokeWidth={1.2} /></div><h2>{t(snapshot.artifacts.length ? "selectMedia" : "emptyLibrary")}</h2><p>{t(snapshot.artifacts.length ? "selectMediaHelp" : "emptyLibraryHelp")}</p>{!snapshot.artifacts.length && <button className="button secondary" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} />{t("import")}</button>}</div>}
           </div>
           <aside className="studio-inspector"><div className="studio-segmented" role="tablist" aria-label={selected?.filename ?? t("selectMedia")}>
-            {(["edit", "publish", "assistant"] as const).map(name => <button key={name} role="tab" aria-selected={inspector === name} id={`${uniqueId}-${name}`} aria-controls={`${uniqueId}-inspector-${name}`} tabIndex={inspector === name ? 0 : -1}
-              onKeyDown={event => { const tabs = ["edit", "publish", "assistant"] as const; const index = tabs.indexOf(name); const next = event.key === "ArrowRight" ? tabs[(index + 1) % 3] : event.key === "ArrowLeft" ? tabs[(index + 2) % 3] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[2] : null; if (next) { event.preventDefault(); setInspector(next); document.getElementById(`${uniqueId}-${next}`)?.focus(); } }} onClick={() => setInspector(name)}>{t(name)}</button>)}
+            {(["edit", "clips", "assistant", "publish"] as const).map(name => <button key={name} role="tab" aria-selected={inspector === name} id={`${uniqueId}-${name}`} aria-controls={`${uniqueId}-inspector-${name}`} tabIndex={inspector === name ? 0 : -1}
+              onKeyDown={event => { const tabs = ["edit", "clips", "assistant", "publish"] as const; const index = tabs.indexOf(name); const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null; if (next) { event.preventDefault(); setInspector(next); document.getElementById(`${uniqueId}-${next}`)?.focus(); } }} onClick={() => setInspector(name)}>{t(name)}</button>)}
           </div>{selected ? <>
             <div role="tabpanel" id={`${uniqueId}-inspector-publish`} aria-labelledby={`${uniqueId}-publish`} hidden={inspector !== "publish"}><PublishForm key={selected.id} artifact={selected} account={account} t={t} busy={busy} connected={connected} submit={fields => {
               void act(async signal => { const result = await request<StudioPublication>("/api/publications", "POST", { context: scope, artifactId: selected.id, ...fields }, signal); if (signal.aborted) return; updatePublication(result); setTab("publishing"); setNotice("draftCreated"); });
@@ -229,6 +230,7 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
               void act(async signal => { const value = await request<StudioRender>(`/api/media/${encodeURIComponent(selected.id)}/render`, "POST", { context: scope, expectedRevision }, signal); if (!signal.aborted) { updateRender(value); setNotice("renderStarted"); } });
             }} /></div>
             <div role="tabpanel" id={`${uniqueId}-inspector-assistant`} aria-labelledby={`${uniqueId}-assistant`} hidden={inspector !== "assistant"}><AssistantPanel key={selected.id} artifact={selected} context={scope} account={account} language={language} onApplied={() => setTimelineEpoch(value => value + 1)} /></div>
+            <div role="tabpanel" id={`${uniqueId}-inspector-clips`} aria-labelledby={`${uniqueId}-clips`} hidden={inspector !== "clips"}>{inspector === "clips" && <ClipPanel key={selected.id} artifact={selected} context={scope} account={account} language={language} onSeek={seekSource} onChanged={() => { void refresh(); }} />}</div>
           </> : <p className="studio-inspector-empty">{t("selectMediaHelp")}</p>}</aside>
         </div>
         {tools && <div className="studio-footnote"><span><ShieldCheck size={13} />{t("sourceSafe")}</span><span>{t("ffmpeg")}: {t(tools.ffmpeg ? "available" : "unavailable")} · {t("ffprobe")}: {t(tools.ffprobe ? "available" : "unavailable")}</span></div>}

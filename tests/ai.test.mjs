@@ -207,6 +207,19 @@ async function ready(f, a, extra = {}) {
   assert.equal(result.state, "ready", JSON.stringify(result));
   return result;
 }
+
+test("timed speech captions cannot bypass transcript consent through current timeline or MCP reads", async t => {
+  const f = await fixture(t), a = await imported(f);
+  f.store.studio.edit(a.id, f.context, 0, { ...EDIT, cropX: .8, timedCaptions: [{ start: 0, end: 1, text: "SPEECH_LOCAL_ONLY" }] });
+  await ready(f, a);
+  assert.ok(!f.bridge.calls[0].prompt.includes("SPEECH_LOCAL_ONLY"));
+  const prepared = JSON.parse(f.bridge.calls[0].prompt);
+  assert.equal(prepared.context.timedCaptionCount, 1); assert.equal(prepared.context.currentEdit.cropX, .8);
+  const grant = await mint(f, a), read = await response(await mcp(f, grant, "timeline_read"), 200);
+  assert.equal(read.timedCaptionsOmitted, true); assert.ok(!JSON.stringify(read).includes("SPEECH_LOCAL_ONLY"));
+  f.bridge.handler = async () => ({ summary: "Controlled cues", edit: { ...EDIT, timedCaptions: [{ start: 0, end: 1, text: "api_key=controlled_secret_value" }] }, sessionId: "controlled" });
+  const next = await ready(f, a); assert.equal(next.edit.timedCaptions[0].text, "api_key=[REDACTED]");
+});
 const renderDone = (f, id) => until(() => f.store.studio.render(id, f.context), value => value.state !== "running", "render completion");
 function patchArtifact(f, a, changes) {
   f.store.db.prepare("UPDATE artifacts SET data=? WHERE id=?").run(JSON.stringify({ ...f.store.studio.artifact(a.id, f.context), ...changes }), a.id);
@@ -306,7 +319,7 @@ test("frozen v3 to v4 migration preserves artifacts, timeline, publications, ren
   for (let attempt = 0; attempt < 2; attempt++) {
     const store = new WorkspaceStore(path);
     try {
-      assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 5);
+      assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 6);
       assert.equal(store.db.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
       assert.deepEqual(store.db.prepare("PRAGMA foreign_key_check").all(), []);
       assert.deepEqual(tables.map(table => store.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), before);

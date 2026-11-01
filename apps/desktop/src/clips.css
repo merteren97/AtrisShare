@@ -1,0 +1,40 @@
+.clips-heading { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 20px; }
+.clips-heading > svg { color: var(--accent); flex-shrink: 0; margin-top: 2px; }
+.clips-heading h2 { font-size: 13px; line-height: 1.6; }
+.clips-heading p, .clips-empty p { color: var(--muted); font-size: 11px; line-height: 1.8; margin-top: 7px; }
+.clips-duration { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.clips-duration input { width: 100%; min-width: 0; }
+.clips-panel .transcription-panel { margin: 20px 0; }
+.clips-list-heading { display: flex; justify-content: space-between; align-items: center; padding-top: 15px; border-top: 1px solid var(--line); margin-top: 20px; scroll-margin-top: 65px; }
+.clips-list-heading h3 { font-size: 12px; }
+.clips-empty { text-align: center; padding: 25px 8px; color: var(--muted); }
+.clips-empty h3 { color: var(--text); font-size: 12px; margin-top: 12px; }
+.clips-status { display: flex; align-items: flex-start; gap: 7px; color: var(--muted); font-size: 11px; line-height: 1.8; margin: 14px 0; }
+.clips-status svg { flex-shrink: 0; margin-top: 3px; }
+.clips-candidates { padding: 0; margin: 14px 0; list-style: none; display: grid; gap: 14px; }
+.clip-card { border: 1px solid var(--line); border-radius: 8px; padding: 13px; background: var(--bg); min-width: 0; }
+.clip-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 5px; }
+.clip-card > header > span { font-size: 10px; color: var(--accent); white-space: nowrap; padding-top: 3px; font-variant-numeric: tabular-nums; }
+.clip-card .studio-checkbox { margin: 0; min-width: 0; }
+.clip-card .studio-checkbox strong { font-size: 10px; font-weight: 550; font-variant-numeric: tabular-nums; line-height: 1.9; }
+.clip-card blockquote { margin: 14px 0; padding-left: 10px; border-left: 2px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.9; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 150px; overflow: auto; }
+.clip-rationale { font-size: 11px; line-height: 1.9; margin-top: 12px; overflow-wrap: anywhere; }
+.clip-card details { font-size: 10px; line-height: 1.8; margin-top: 12px; }
+.clip-card summary, .clips-provenance summary { color: var(--muted); cursor: pointer; padding: 5px 0; }
+.clip-card dl { margin-top: 9px; }
+.clip-card dl > div { display: flex; justify-content: space-between; gap: 10px; padding: 3px 0; color: var(--muted); }
+.clip-card dd { margin: 0; font-variant-numeric: tabular-nums; color: var(--text); }
+.clip-card .text-button { font-size: 10px; white-space: normal; text-align: left; }
+.clip-adjust > fieldset { padding-top: 12px; }
+.clips-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 12px; }
+.clip-cues { max-height: 320px; overflow: auto; padding: 0; list-style: none; margin-top: 10px; }
+.clip-cues li { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
+.clip-cues input, .clip-cues textarea { width: 100%; min-width: 0; padding: 8px; font-size: 11px; }
+.clip-cues textarea { margin-top: 7px; resize: vertical; }
+.clip-preview { width: 100%; max-height: 320px; display: block; margin-top: 12px; background: #050708; }
+.clip-draft { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.clips-provenance { font-size: 10px; line-height: 1.8; border-top: 1px solid var(--line); padding-top: 12px; margin-top: 18px; }
+.clips-provenance p { margin-top: 8px; color: var(--muted); }
+.clips-provenance code { display: block; overflow-wrap: anywhere; margin-top: 10px; color: var(--faint); }
+.clips-panel input[type="range"] { width: 100%; accent-color: var(--accent); padding: 0; }
+.clips-panel output { font-variant-numeric: tabular-nums; color: var(--muted); }

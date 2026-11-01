@@ -66,7 +66,10 @@ The player switches source/proxy at the same **source time**. It is not a live
 preview of unsaved edits or a shortened edited-output clock. Export and AI proposal
 preview are separate render kinds. Proxy/preview artifacts are excluded from the
 publication/library surface; source bytes remain immutable. AI/MCP uses this engine
-for proposal previews and local transcription; automated clip discovery is Phase 5 work.
+for proposal previews and local transcription. Phase 5 adds local scene/silence
+analysis, horizontal crop positioning and source-time timed caption rendering with
+literal text/filter-script files; clip batches share the kept-range A/V pipeline.
+See [reviewed clips and limits](../../docs/CLIPS.md).
 
 ## Local transcription — Phase 4 core implemented
 

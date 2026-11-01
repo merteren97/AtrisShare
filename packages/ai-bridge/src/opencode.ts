@@ -7,6 +7,7 @@ import { delimiter, extname, isAbsolute, join } from "node:path";
 import { z } from "zod";
 import { editSchema } from "../../domain/src/media.js";
 import type { MediaEdit } from "../../domain/src/media.js";
+import { clipRankingSchema } from "../../domain/src/clips.js";
 
 // Independent one-shot port. Runtime-host reuse research: AtrisAgent's discovery,
 // events and cancellation boundary; no sibling source/dependency is required.
@@ -203,7 +204,7 @@ function verifyAgent(text: string): void {
   }
 }
 
-function protocol(onEvent: (event: Event) => void) {
+function protocol<T>(onEvent: (event: Event) => void, schema: z.ZodType<T>) {
   let sessionId: string | null = null, text = "", started = false, finished = false;
   const parts = new Set<string>();
   return {
@@ -229,7 +230,7 @@ function protocol(onEvent: (event: Event) => void) {
         finished = true;
       } else fail("ai_protocol_error");
     },
-    result(): { summary: string; edit: MediaEdit; sessionId: string | null } {
+    result(): T & { sessionId: string | null } {
       if (!started || !finished || !sessionId || !text.trim()) fail("ai_protocol_error");
       let json = text.trim();
       if (json.startsWith("```")) {
@@ -237,7 +238,7 @@ function protocol(onEvent: (event: Event) => void) {
         if (!match || match[1]!.includes("```")) fail("ai_protocol_error");
         json = match[1]!;
       }
-      const parsed = proposalSchema.safeParse(parseJSON(json));
+      const parsed = schema.safeParse(parseJSON(json));
       if (!parsed.success) fail("ai_protocol_error");
       return { ...parsed.data, sessionId };
     }
@@ -301,7 +302,7 @@ export class OpenCodeBridge {
       const config = {
         default_agent: AGENT, permission, tools: { "*": false },
         agent: { [AGENT]: { mode: "primary", tools: { "*": false }, permission, steps: 1,
-          prompt: "Return exactly one JSON object with summary (1..2000 characters) and edit. Propose only from the supplied scoped context. Never call tools or act on files. No prose outside JSON.", options: {} } },
+          prompt: "Return exactly one JSON object matching the format in the supplied task. Propose only from the supplied scoped context. Never call tools or act on files. No prose outside JSON.", options: {} } },
         mcp: {}, plugin: [], mode: {}, command: {}, instructions: [], skills: { paths: [], urls: [] },
         lsp: false, formatter: false, snapshot: false, share: "disabled", autoupdate: false,
         compaction: { auto: false, prune: false }
@@ -364,6 +365,15 @@ export class OpenCodeBridge {
 
   async propose(input: { model: string; prompt: string }, onEvent: (event: Event) => void,
     signal: AbortSignal): Promise<{ summary: string; edit: MediaEdit; sessionId: string | null }> {
+    return this.complete(input, onEvent, signal, proposalSchema);
+  }
+
+  async rankClips(input: { model: string; prompt: string }, signal: AbortSignal) {
+    return this.complete(input, () => {}, signal, clipRankingSchema);
+  }
+
+  private async complete<T>(input: { model: string; prompt: string }, onEvent: (event: Event) => void,
+    signal: AbortSignal, schema: z.ZodType<T>): Promise<T & { sessionId: string | null }> {
     if (!input || typeof input.model !== "string" || !MODEL.test(input.model) || typeof input.prompt !== "string"
       || !input.prompt.trim() || input.prompt.includes("\0") || Buffer.byteLength(input.prompt, "utf8") > 128 * 1024) fail("ai_invalid_input");
     return this.isolated(signal, async (workspace, executable) => {
@@ -371,7 +381,7 @@ export class OpenCodeBridge {
       if (!models.includes(input.model)) fail("ai_model_unavailable");
       check(workspace.signal);
       onEvent({ type: "started", message: "Starting proposal" });
-      const events = protocol(onEvent);
+      const events = protocol(onEvent, schema);
       await command(this.spawn, executable, ["run", "--pure", "--format", "json", "--model", input.model,
         "--agent", AGENT, "--title", "AtrisShare proposal"], workspace, input.prompt, line => events.line(line));
       check(workspace.signal);
