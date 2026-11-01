@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { join } from "node:path";
+import { createReadStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { z, ZodError } from "zod";
 import {
   APP_VERSION, contextSchema, createAccountSchema, createMemorySchema, createProjectSchema,
@@ -11,6 +13,9 @@ import { WorkspaceStore } from "../../../packages/storage/src/store.js";
 import { createCredentialVault, type CredentialVault } from "../../../packages/storage/src/vault.js";
 import { startYouTubeSchema, youtubeAccountSchema } from "../../../packages/domain/src/youtube.js";
 import { YouTubeService, type YouTubeOptions } from "./youtube.js";
+import { StudioService, type StudioOptions } from "./studio.js";
+import { publicationInputSchema, studioContextSchema } from "../../../packages/domain/src/studio.js";
+import { editSchema } from "../../../packages/domain/src/media.js";
 
 export interface ApiOptions {
   dataDirectory?: string;
@@ -22,6 +27,7 @@ export interface ApiOptions {
   /** Internal integration-test dependencies, not HTTP/runtime configuration. */
   credentialVault?: CredentialVault;
   youtube?: YouTubeOptions;
+  studio?: StudioOptions;
 }
 export const NATIVE_ORIGINS = ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
 const MAX_BODY = 32 * 1024;
@@ -63,6 +69,7 @@ export async function startApi(options: ApiOptions = {}) {
   const vault = credentialVault.status;
   const store = new WorkspaceStore(join(directory, "atris-share.sqlite"));
   const youtube = new YouTubeService(store, credentialVault, options.youtube);
+  const studio = new StudioService(store, youtube, credentialVault, directory, options.studio);
   let origin = "";
   let closePromise: Promise<void> | undefined;
   const send = (response: ServerResponse, status: number, payload: unknown) => {
@@ -98,7 +105,8 @@ export async function startApi(options: ApiOptions = {}) {
         response.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'" });
         response.end('<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>AtrisShare — YouTube</title><h1>AtrisShare</h1><p>Return to AtrisShare to see the connection result. You may close this tab.</p><p lang="tr">Bağlantı sonucunu görmek için AtrisShare’e dönün. Bu sekmeyi kapatabilirsiniz.</p></html>'); return;
       }
-      if ([...url.searchParams.keys()].some(key => /token|secret|authorization/i.test(key))) throw new WorkspaceError(400, "credentials_in_url");
+      if ([...url.searchParams.keys()].some(key => /token|secret|authorization/i.test(key) &&
+        !(key === "pageToken" && url.pathname === "/api/youtube/catalog"))) throw new WorkspaceError(400, "credentials_in_url");
       const received = createHash("sha256").update(request.headers.authorization ?? "").digest();
       if (!timingSafeEqual(received, expected)) throw new WorkspaceError(401, "unauthorized");
       const route = `${request.method} ${url.pathname}`;
@@ -122,6 +130,55 @@ export async function startApi(options: ApiOptions = {}) {
       } else if (route === "POST /api/youtube/disconnect") {
         const input = youtubeAccountSchema.extend({ revoke: z.boolean() }).strict().parse(await body(request));
         send(response, 200, await youtube.disconnect({ accountId: input.accountId, destinationId: input.destinationId }, input.revoke));
+      } else if (route === "GET /api/studio") {
+        send(response, 200, await studio.snapshot(queryContext(url)));
+      } else if (route === "POST /api/media/import") {
+        if (Number(request.headers["content-length"] ?? 0) > 2 * 1024 ** 3) throw new WorkspaceError(413, "body_too_large");
+        const filename = z.string().min(1).max(240).parse(url.searchParams.get("filename"));
+        const abort = new AbortController(); const cancelled = () => abort.abort();
+        request.on("aborted", cancelled); response.on("close", cancelled);
+        request.setTimeout(120_000, cancelled);
+        try { send(response, 201, await studio.import(queryContext(url), request, filename, abort.signal)); }
+        finally { request.off("aborted", cancelled); response.off("close", cancelled); }
+      } else if (request.method === "GET" && /^\/api\/media\/[^/]+\/content$/.test(url.pathname)) {
+        const artifact = store.studio.artifact(idSchema.parse(url.pathname.split("/")[3]), queryContext(url));
+        // No bearer-bearing URLs. Browser playback uses a bounded authenticated Blob.
+        if (artifact.bytes > 256 * 1024 ** 2) throw new WorkspaceError(413, "studio_blob_limit");
+        response.writeHead(200, { "Content-Type": artifact.mimeType, "Content-Length": artifact.bytes, "Content-Disposition": "inline" });
+        await pipeline(createReadStream(studio.engine.path(artifact.id)), response);
+      } else if (route === "GET /api/youtube/catalog") {
+        send(response, 200, await studio.catalog(idSchema.parse(url.searchParams.get("accountId")),
+          z.string().parse(url.searchParams.get("destinationId")), z.string().max(4096).nullable().parse(url.searchParams.get("pageToken"))));
+      } else if (request.method === "POST" && /^\/api\/media\/[^/]+\/link$/.test(url.pathname)) {
+        const input = z.object({ context: studioContextSchema, videoId: z.string().regex(/^[\w-]{11}$/) }).strict().parse(await body(request));
+        send(response, 200, await studio.link(idSchema.parse(url.pathname.split("/")[3]), input.context, input.videoId));
+      } else if (/^\/api\/media\/[^/]+\/timeline(?:\/(undo|redo))?$/.test(url.pathname)) {
+        const id = idSchema.parse(url.pathname.split("/")[3]);
+        if (request.method === "GET" && url.pathname.endsWith("/timeline")) send(response, 200, store.studio.timeline(id, queryContext(url)));
+        else if (request.method === "PUT" && url.pathname.endsWith("/timeline")) {
+          const input = z.object({ context: studioContextSchema, expectedRevision: z.number().int().nonnegative(), edit: editSchema }).strict().parse(await body(request));
+          send(response, 200, store.studio.edit(id, input.context, input.expectedRevision, input.edit));
+        } else if (request.method === "POST" && /\/(undo|redo)$/.test(url.pathname)) {
+          const input = z.object({ context: studioContextSchema, expectedRevision: z.number().int().nonnegative() }).strict().parse(await body(request));
+          send(response, 200, store.studio.edit(id, input.context, input.expectedRevision, undefined, url.pathname.endsWith("/undo") ? "undo" : "redo"));
+        } else throw new WorkspaceError(405, "method_not_allowed");
+      } else if (request.method === "POST" && /^\/api\/media\/[^/]+\/render$/.test(url.pathname)) {
+        const input = z.object({ context: studioContextSchema, expectedRevision: z.number().int().nonnegative() }).strict().parse(await body(request));
+        send(response, 202, studio.render(idSchema.parse(url.pathname.split("/")[3]), input.context, input.expectedRevision));
+      } else if (request.method === "POST" && /^\/api\/renders\/[^/]+\/cancel$/.test(url.pathname)) {
+        const input = z.object({ context: studioContextSchema }).strict().parse(await body(request));
+        send(response, 200, studio.cancelRender(idSchema.parse(url.pathname.split("/")[3]), input.context));
+      } else if (route === "POST /api/publications") {
+        send(response, 201, await studio.create(publicationInputSchema.parse(await body(request))));
+      } else if (request.method === "POST" && /^\/api\/publications\/[^/]+\/(approve|cancel|reconcile)$/.test(url.pathname)) {
+        const id = idSchema.parse(url.pathname.split("/")[3]);
+        if (url.pathname.endsWith("/approve")) {
+          const input = z.object({ context: studioContextSchema, digest: z.string().regex(/^[a-f0-9]{64}$/) }).strict().parse(await body(request));
+          send(response, 202, studio.approve(id, input.context, input.digest));
+        } else {
+          const input = z.object({ context: studioContextSchema }).strict().parse(await body(request));
+          send(response, 202, url.pathname.endsWith("/cancel") ? studio.cancel(id, input.context) : studio.reconcile(id, input.context));
+        }
       } else if (route === "PUT /api/context") {
         send(response, 200, store.setContext(contextSchema.parse(await body(request))));
       } else if (route === "GET /api/projects") {
@@ -152,10 +209,10 @@ export async function startApi(options: ApiOptions = {}) {
       else send(response, 500, { error: "operation_failed" });
     });
   });
-  server.requestTimeout = 10_000;
+   server.requestTimeout = 30 * 60_000; // bounded 2 GiB media streaming; JSON keeps its small size limit.
   server.headersTimeout = 10_000;
   function close(): Promise<void> {
-    closePromise ??= youtube.close().then(() => new Promise<void>((resolve, reject) => {
+    closePromise ??= Promise.all([studio.close(), youtube.close()]).then(() => new Promise<void>((resolve, reject) => {
       server.close(error => { store.close(); if (error) reject(error); else resolve(); });
       server.closeIdleConnections();
     }));

@@ -1,0 +1,139 @@
+.atris-share-titlebar {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  box-sizing: border-box;
+  width: 100%;
+  height: 40px;
+  min-height: 40px;
+  flex: 0 0 40px;
+  border-bottom: 1px solid var(--line);
+  background: var(--sidebar);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.atris-share-titlebar__drag {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+}
+
+.atris-share-titlebar__brand,
+.atris-share-titlebar__studio,
+.atris-share-titlebar__right {
+  pointer-events: none;
+  min-width: 0;
+}
+
+.atris-share-titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 14px;
+  font-weight: 650;
+  letter-spacing: -.25px;
+  white-space: nowrap;
+}
+
+.atris-share-titlebar__mark {
+  display: grid;
+  place-items: center;
+  width: 23px;
+  height: 23px;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.atris-share-titlebar__brand-light { font-weight: 450; }
+
+.atris-share-titlebar__studio {
+  overflow: hidden;
+  padding: 0 18px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: .12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.atris-share-titlebar__right {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  height: 100%;
+}
+
+.atris-share-titlebar__workspace,
+.atris-share-titlebar__status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 16px;
+  color: var(--faint);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.atris-share-titlebar__status {
+  pointer-events: auto;
+  max-width: 230px;
+  color: var(--danger);
+  line-height: 1.4;
+}
+
+.atris-share-titlebar__status:empty { display: none; }
+.atris-share-titlebar__status > span { overflow: hidden; text-overflow: ellipsis; }
+
+.atris-share-titlebar__controls {
+  display: flex;
+  align-self: stretch;
+  flex-shrink: 0;
+  pointer-events: auto;
+}
+
+.atris-share-titlebar__control {
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  width: 46px;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: default;
+}
+
+.atris-share-titlebar__control:hover:not(:disabled) { background: var(--surface-raised); color: var(--text); }
+.atris-share-titlebar__control:active:not(:disabled) { background: var(--line); }
+.atris-share-titlebar__control--close:hover:not(:disabled) { background: var(--danger-soft); color: var(--danger); }
+.atris-share-titlebar__control--close:active:not(:disabled) { background: var(--danger); color: var(--bg); }
+.atris-share-titlebar__control:focus-visible { position: relative; outline: 2px solid var(--focus); outline-offset: -4px; }
+.atris-share-titlebar__control:disabled { opacity: .5; }
+
+.atris-share-titlebar[data-focused="false"] .atris-share-titlebar__brand,
+.atris-share-titlebar[data-focused="false"] .atris-share-titlebar__studio,
+.atris-share-titlebar[data-focused="false"] .atris-share-titlebar__workspace { opacity: .65; }
+
+@media (max-width: 600px) {
+  .atris-share-titlebar__workspace { display: none; }
+  .atris-share-titlebar__studio { padding: 0 8px; }
+  .atris-share-titlebar__status { margin: 0 8px; }
+}
+
+@media (max-width: 480px) {
+  .atris-share-titlebar[data-native="true"] { grid-template-columns: auto minmax(0, 1fr); }
+  .atris-share-titlebar[data-native="true"] .atris-share-titlebar__studio { display: none; }
+}

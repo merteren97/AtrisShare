@@ -1,17 +1,19 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ArrowUpRight, BrainCircuit, Check, ChevronRight, CircleAlert, Database, FolderKanban, HardDrive,
+import { ArrowUpRight, BrainCircuit, Check, ChevronRight, CircleAlert, Database, Clapperboard, FolderKanban, HardDrive,
   LoaderCircle, NotebookPen, Plus, RefreshCw, Search, Settings2, Share2, ShieldCheck, UsersRound, X } from "lucide-react";
 import type { WorkspaceAccount, WorkspaceContext, WorkspaceMemory, WorkspaceProject } from "../../../packages/domain/src/workspace.js";
 import { ApiError, request } from "./api";
 import { dictionaries, kindKeys, type Language, type TextKey } from "./i18n";
 import { useWorkspace } from "./use-workspace";
 import { Accounts, accountStatusKey, PlatformIcon } from "./Accounts";
+import { Titlebar } from "./Titlebar";
+import { Studio } from "./Studio";
 
-type Page = "workspace" | "memory" | "accounts" | "settings";
+type Page = "studio" | "workspace" | "memory" | "accounts" | "settings";
 type Modal = { type: "account" | "project" } | { type: "memory" | "delete"; entry: WorkspaceMemory | null };
 const platformNames = { youtube: "YouTube", x: "X", tiktok: "TikTok", linkedin: "LinkedIn" };
-const nav = [{ id: "workspace", icon: FolderKanban }, { id: "memory", icon: BrainCircuit },
+const nav = [{ id: "studio", icon: Clapperboard }, { id: "workspace", icon: FolderKanban }, { id: "memory", icon: BrainCircuit },
   { id: "accounts", icon: UsersRound }, { id: "settings", icon: Settings2 }] as const;
 
 function preference(key: string, fallback: string): string {
@@ -41,7 +43,7 @@ function MemoryCard({ entry, t, date, onEdit, onDelete }: {
 export function App() {
   const [language, setLanguage] = useState<Language>(() => preference("atris-share-language", "tr") === "en" ? "en" : "tr");
   const [theme, setTheme] = useState(() => preference("atris-share-theme", "dark") === "light" ? "light" : "dark");
-  const [page, setPage] = useState<Page>("workspace");
+  const [page, setPage] = useState<Page>("studio");
   const [modal, setModal] = useState<Modal | null>(null);
   const [pending, setPending] = useState(false);
   const [formError, setFormError] = useState<unknown>(null);
@@ -108,7 +110,7 @@ export function App() {
       void mutate(async () => {
         const created = await request<WorkspaceProject>("/api/projects", "POST", { accountId: scope.accountId, name: text("name"), description: text("description") });
         await request("/api/context", "PUT", { accountId: scope.accountId, projectId: created.id });
-        setPage("workspace");
+        setPage("studio");
       }, "projectCreated");
     } else if (modal?.type === "memory" && context) {
       const entry = modal.entry;
@@ -136,19 +138,19 @@ export function App() {
     onEdit={value => open({ type: "memory", entry: value })} onDelete={value => open({ type: "delete", entry: value })} />;
   const modalTitle = modal?.type === "account" ? t("addAccount") : modal?.type === "project" ? t("newProject") : modal?.type === "delete" ? t("deleteTitle") : modal?.type === "memory" && modal.entry ? t("edit") : t("newMemory");
 
-  return <div className="app-shell">
+  return <div className="desktop-shell"><Titlebar language={language} /><div className="app-shell">
     <aside className="sidebar" aria-label="AtrisShare">
-      <a className="brand" href="#" onClick={event => { event.preventDefault(); setPage("workspace"); }}><span className="brand-mark"><Share2 size={21} strokeWidth={2.4} /></span><span>Atris<span className="brand-light">Share</span><small>PREVIEW</small></span></a>
-      <div className="sidebar-label">{t("local")}</div>
+      <a className="brand" href="#" onClick={event => { event.preventDefault(); setPage("studio"); }}><span className="brand-mark"><Share2 size={21} strokeWidth={2.4} /></span><span>Atris<span className="brand-light">Share</span></span></a>
+      <div className="sidebar-label">{t("studioLabel")}</div>
       <nav aria-label={t("workspace")}>{nav.map(item => <button key={item.id} className={`nav-item ${page === item.id ? "active" : ""}`} aria-current={page === item.id ? "page" : undefined}
         title={t(item.id)} onClick={() => setPage(item.id)}><item.icon size={18} /><span>{t(item.id)}</span>{item.id === "memory" && <small>{ws.memory.length}</small>}</button>)}</nav>
-      <div className="sidebar-bottom"><span className="phase-dot" /><div><strong>{t("phase")}</strong><p>{t("futureDescription")}</p></div></div>
+      <div className="sidebar-bottom"><ShieldCheck size={17} /><div><strong>{t("local")}</strong><p>{t("localDescription")}</p></div></div>
       <a className="hub-link" href="https://atrishub.com" target="_blank" rel="noreferrer">AtrisHub <ArrowUpRight size={14} /></a>
     </aside>
 
     <div className="main-shell">
       <header className="topbar"><div className="breadcrumb">AtrisShare <ChevronRight size={14} /><strong>{t(page)}</strong></div>
-        <div className="topbar-right"><span className={`connection ${ws.error ? "offline" : ""}`}><span />{ws.error ? t("retry") : t("preview")}</span>
+        <div className="topbar-right"><span className={`connection ${ws.error ? "offline" : ""}`}><span />{ws.error ? t("retry") : t("saved")}</span>
           <button className="icon-button" aria-label={t("retry")} title={t("retry")} disabled={ws.loading} onClick={() => { void ws.refresh(true); }}><RefreshCw size={16} className={ws.loading ? "spinning" : ""} /></button></div></header>
 
       <div className="context-bar" aria-label={t("scopeDescription")}>
@@ -159,19 +161,24 @@ export function App() {
         <label className="project-select"><span>{t("project")}</span><select aria-label={t("project")} value={context?.projectId ?? ""} disabled={!context || ws.loading}
           onChange={event => { if (context) void ws.chooseContext({ accountId: context.accountId, projectId: event.target.value || null }); }}>
           <option value="">{t("accountScope")}</option>{state?.projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
-        <div className="context-saved"><Database size={13} /><span>SQLite</span></div>
+        <div className="context-saved"><Database size={13} /><span>{t("local")}</span></div>
       </div>
 
       <main id="main-content" aria-busy={ws.loading}>
         {!!ws.error && <div className="error-banner" role="alert"><CircleAlert size={17} /><span>{errorText(ws.error)}</span><button className="text-button" onClick={() => { void ws.refresh(true); }}>{t("retry")}</button></div>}
         {ws.loading && !state ? <div className="loading-state" role="status"><LoaderCircle className="spinning" />{t("loading")}</div> : state && <>
+          {page === "studio" && (context && account && context.projectId ? <Studio key={`${context.accountId}:${context.projectId}`} context={context} account={account} language={language} errorText={errorText} /> : <>
+            <div className="page-heading"><div><p className="eyebrow">{t("studioLabel")}</p><h1>{t("studioTitle")}</h1><p>{t("studioDescription")}</p></div>{account ? addProject : <button className="button primary" onClick={() => setPage("accounts")}><Plus size={16} />{t("connectYouTube")}</button>}</div>
+            <div className="panel welcome"><Empty icon={<Clapperboard size={30} />} title={t(account ? "chooseStudioProject" : "welcomeStudio")} description={t("studioStartHelp")}
+              action={account ? <div className="studio-start-actions">{addProject}<button className="button secondary" onClick={() => setPage("workspace")}>{t("projects")}</button></div> : <button className="button primary" onClick={() => setPage("accounts")}>{t("accounts")}<ArrowUpRight size={14} /></button>} /></div>
+          </>)}
           {page === "workspace" && <>
             <div className="page-heading"><div><p className="eyebrow">{t("workspace")}</p><h1>{t("homeTitle")}</h1><p>{t("homeDescription")}</p></div>{account ? addProject : addAccount}</div>
             {!account ? <div className="panel welcome"><Empty icon={<FolderKanban size={30} />} title={t("welcomeTitle")} description={t("welcomeDescription")} action={addAccount} /></div> : <>
               <div className="target-strip"><PlatformIcon platform={account.platform} /><div><strong>{account.displayName}</strong><p>{t(account.status === "demo" ? "demoNotice" : account.status === "connected" ? "youtubeAccountNotice" : "youtubeDisconnectedNotice")}</p></div><span className={`badge ${account.status === "connected" ? "positive" : "demo-badge"}`}>{platformNames[account.platform]} · {t(accountStatusKey(account))}</span></div>
               <section className="section"><div className="section-heading"><div><h2>{t("projects")} <span className="count">{state.projects.length}</span></h2><p>{t("projectsDescription")}</p></div></div>
                 {state.projects.length ? <div className="project-grid">{state.projects.map(item => <button className={`project-card ${project?.id === item.id ? "selected-project" : ""}`} key={item.id} disabled={ws.loading}
-                  onClick={() => { void ws.chooseContext({ accountId: item.accountId, projectId: item.id }); }}><span className="project-symbol"><FolderKanban size={20} /></span>
+                  onClick={() => { void ws.chooseContext({ accountId: item.accountId, projectId: item.id }); setPage("studio"); }}><span className="project-symbol"><FolderKanban size={20} /></span>
                   <span className="project-card-copy"><strong>{item.name}</strong><span>{item.description || platformNames[account.platform]}</span></span><span className="project-card-bottom">{project?.id === item.id ? t("selected") : t("open")}<ChevronRight size={14} /></span></button>)}</div>
                   : <div className="panel"><Empty icon={<FolderKanban size={24} />} title={t("noProjects")} description={t("noProjectsDescription")} action={addProject} /></div>}
               </section>
@@ -232,5 +239,5 @@ export function App() {
         </form>
       </Dialog.Content></Dialog.Portal>
     </Dialog.Root>
-  </div>;
+  </div></div>;
 }

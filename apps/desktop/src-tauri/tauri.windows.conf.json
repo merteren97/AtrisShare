@@ -1,0 +1,10 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "windows": [{
+      "label": "main", "title": "AtrisShare", "width": 1260, "height": 830,
+      "minWidth": 740, "minHeight": 560, "center": true, "backgroundColor": "#141719",
+      "decorations": false
+    }]
+  }
+}

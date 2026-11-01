@@ -1,10 +1,23 @@
 import type { DatabaseSync } from "node:sqlite";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 export function migrate(db: DatabaseSync): void {
   // SQLite's documented table-rebuild procedure. Foreign keys are checked before
   // commit and re-enabled on every exit; no dependent rows are dropped.
-  db.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=OFF; PRAGMA journal_mode=WAL;");
+  db.exec("PRAGMA busy_timeout=5000; PRAGMA foreign_keys=OFF;");
+  // journal_mode can return SQLITE_BUSY immediately during simultaneous first
+  // opens, even with busy_timeout installed. Retry only this pre-transaction
+  // PRAGMA; never replay a partially executed migration or user mutation.
+  const deadline = Date.now() + 5000;
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  while (true) {
+    try { db.exec("PRAGMA journal_mode=WAL;"); break; }
+    catch (error) {
+      const sqliteCode = error && typeof error === "object" && "errcode" in error ? Number(error.errcode) & 0xff : 0;
+      if (![5, 6].includes(sqliteCode) || Date.now() >= deadline) { db.exec("PRAGMA foreign_keys=ON"); throw error; }
+      Atomics.wait(sleeper, 0, 0, 25);
+    }
+  }
   db.exec("BEGIN IMMEDIATE");
   try {
     const row = db.prepare("PRAGMA user_version").get() as { user_version: number };
@@ -53,6 +66,29 @@ export function migrate(db: DatabaseSync): void {
         verified_at TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision>0)
       ) STRICT;
       PRAGMA user_version=2;
+    `);
+    if (row.user_version < 3) db.exec(`
+      CREATE TABLE artifacts (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id), project_id TEXT NOT NULL,
+        data TEXT NOT NULL, UNIQUE(id,account_id,project_id),
+        FOREIGN KEY(project_id,account_id) REFERENCES projects(id,account_id)
+      ) STRICT;
+      CREATE TABLE timelines (
+        artifact_id TEXT PRIMARY KEY REFERENCES artifacts(id), data TEXT NOT NULL
+      ) STRICT;
+      CREATE TABLE publications (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id), project_id TEXT NOT NULL,
+        artifact_id TEXT NOT NULL, data TEXT NOT NULL, session_ref TEXT, owner TEXT, lease_until INTEGER NOT NULL DEFAULT 0,
+        dispatch_revoked INTEGER NOT NULL DEFAULT 0 CHECK(dispatch_revoked IN (0,1)),
+        FOREIGN KEY(artifact_id,account_id,project_id) REFERENCES artifacts(id,account_id,project_id)
+      ) STRICT;
+      CREATE INDEX publications_scope ON publications(account_id,project_id);
+      CREATE TABLE renders (
+        id TEXT PRIMARY KEY, account_id TEXT NOT NULL, project_id TEXT NOT NULL, source_id TEXT NOT NULL,
+        data TEXT NOT NULL, owner TEXT NOT NULL, lease_until INTEGER NOT NULL,
+        FOREIGN KEY(source_id,account_id,project_id) REFERENCES artifacts(id,account_id,project_id)
+      ) STRICT;
+      PRAGMA user_version=3;
     `);
     if (db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("Migration foreign key check failed");
     db.exec("COMMIT");

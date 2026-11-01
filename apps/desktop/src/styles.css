@@ -37,8 +37,10 @@ h1 { font-size: clamp(22px, 2.3vw, 29px); font-weight: 600; letter-spacing: -.75
 h2 { font-size: 15px; font-weight: 600; letter-spacing: -.2px; }
 h3 { font-size: 16px; font-weight: 600; letter-spacing: -.25px; }
 svg { flex-shrink: 0; }
-.app-shell { display: flex; height: 100dvh; min-height: 380px; overflow: hidden; }
-.sidebar { width: 212px; flex-shrink: 0; padding: 28px 14px 14px; background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+.desktop-shell { display: flex; flex-direction: column; height: 100dvh; overflow: hidden; }
+.app-shell { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+.studio-start-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: center; }
+.sidebar { width: 196px; flex-shrink: 0; padding: 24px 12px 14px; background: var(--sidebar); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 10px; padding: 0 10px; font-size: 20px; font-weight: 650; letter-spacing: -.6px; width: fit-content; }
 .brand-mark { display: grid; place-items: center; width: 34px; height: 36px; background: var(--accent); color: var(--accent-ink); border-radius: 10px; }
 .brand-light { font-weight: 400; }
@@ -56,7 +58,7 @@ svg { flex-shrink: 0; }
 .hub-link { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; padding: 10px; }
 .hub-link:hover { color: var(--accent); }
 .main-shell { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-.topbar { height: 58px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; border-bottom: 1px solid var(--line); }
+.topbar { height: 46px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 26px; border-bottom: 1px solid var(--line); }
 .breadcrumb { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 12px; }
 .breadcrumb strong { color: var(--muted); font-weight: 500; }
 .topbar-right { display: flex; align-items: center; gap: 16px; }
@@ -65,7 +67,7 @@ svg { flex-shrink: 0; }
 .connection.offline > span, .offline-dot { background: var(--danger) !important; }
 .icon-button { display: inline-grid; place-items: center; padding: 6px; border: none; background: transparent; color: var(--muted); }
 .icon-button:hover { background: var(--surface-raised); color: var(--text); }
-.context-bar { display: flex; align-items: center; gap: 23px; padding: 16px 30px; background: var(--surface); border-bottom: 1px solid var(--line); min-height: 84px; }
+.context-bar { display: flex; align-items: center; gap: 23px; padding: 12px 26px; background: var(--surface); border-bottom: 1px solid var(--line); min-height: 72px; }
 .context-bar label > span:first-child { display: block; font-size: 10px; font-weight: 500; color: var(--faint); margin-bottom: 7px; }
 .context-bar label { min-width: 0; }
 .context-select { display: flex; align-items: center; gap: 8px; }

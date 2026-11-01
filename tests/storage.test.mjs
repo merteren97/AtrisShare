@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { Worker } from "node:worker_threads";
@@ -125,27 +126,140 @@ test("Phase 1 schema upgrade preserves every dependent row and keeps foreign key
     assert.throws(() => store.setContext({ accountId: other.id, projectId }), /context_not_found/);
     const inspection = new DatabaseSync(path);
     try {
-      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 2);
+      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 3);
       assert.deepEqual(inspection.prepare("PRAGMA foreign_key_check").all(), []);
       assert.ok(inspection.prepare("PRAGMA foreign_key_list(memory)").all().every(row => row.table !== "accounts_next"));
     } finally { inspection.close(); }
   } finally { store.close(); }
 });
 
-test("concurrent first launches serialize migrations and preserve both writers", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "atris-share-concurrent-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+test("WAL initialization waits for a rollback-journal writer and preserves data and foreign keys", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "atris-share-wal-lock-"));
+  let worker;
+  t.after(async () => {
+    await worker?.terminate();
+    await rm(directory, { recursive: true, force: true });
+  });
   const path = join(directory, "workspace.sqlite");
+  const seed = new WorkspaceStore(path);
+  let account, project, scope, entry;
+  try {
+    account = createAccount(seed);
+    project = seed.createProject({ accountId: account.id, name: "Persistent", description: "Before lock" });
+    scope = { accountId: account.id, projectId: project.id };
+    seed.setContext(scope);
+    entry = seed.createMemory(note(scope));
+  } finally { seed.close(); }
+  const setup = new DatabaseSync(path);
+  try { assert.equal(setup.prepare("PRAGMA journal_mode=DELETE").get().journal_mode, "delete"); }
+  finally { setup.close(); }
+
+  // The holder cannot release until the main thread observes a real WAL error.
+  // Its timer runs in another thread while WorkspaceStore's synchronous open waits.
+  const release = new Int32Array(new SharedArrayBuffer(4));
+  worker = new Worker(`
+    const assert = require('node:assert/strict');
+    const { DatabaseSync } = require('node:sqlite');
+    const { parentPort, workerData } = require('node:worker_threads');
+    const release = new Int32Array(workerData.release);
+    const db = new DatabaseSync(workerData.path);
+    try {
+      assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode, 'delete');
+      db.exec('BEGIN IMMEDIATE');
+      db.prepare('UPDATE projects SET description=? WHERE id=?').run('Committed by lock holder', workerData.projectId);
+      parentPort.postMessage('locked');
+      assert.notEqual(Atomics.wait(release, 0, 0, 10000), 'timed-out', 'main thread never observed the WAL lock');
+      Atomics.wait(release, 0, 1, 100);
+      db.exec('COMMIT');
+      Atomics.store(release, 0, 2);
+    } finally { db.close(); }
+  `, { eval: true, workerData: { path, projectId: project.id, release: release.buffer } });
+  assert.deepEqual(await once(worker, "message"), ["locked"]);
+
+  const exec = DatabaseSync.prototype.exec;
+  const busyErrors = [];
+  let migrationDb;
+  const observation = t.mock.method(DatabaseSync.prototype, "exec", function (sql) {
+    if (/PRAGMA journal_mode\s*=\s*WAL/i.test(sql)) migrationDb = this;
+    try { return exec.call(this, sql); }
+    catch (error) {
+      if (/PRAGMA journal_mode\s*=\s*WAL/i.test(sql)) {
+        busyErrors.push({ code: error.code, errcode: error.errcode, errstr: error.errstr });
+        if (Atomics.compareExchange(release, 0, 0, 1) === 0) Atomics.notify(release, 0);
+      }
+      throw error;
+    }
+  });
+  const started = performance.now();
+  let store;
+  try { store = new WorkspaceStore(path); }
+  finally { observation.mock.restore(); }
+  const elapsed = performance.now() - started;
+  try {
+    const [exitCode] = await once(worker, "exit");
+    assert.equal(exitCode, 0);
+    assert.ok(elapsed >= 100, "open must wait for the lock holder's 100 ms delay");
+    assert.equal(Atomics.load(release, 0), 2, "open must succeed after the holder commits");
+    assert.ok(busyErrors.length > 0, "exercise the WAL retry with a real SQLite error");
+    for (const error of busyErrors) {
+      assert.equal(error.code, "ERR_SQLITE_ERROR");
+      assert.equal(error.errcode, 5, "Node exposes SQLITE_BUSY as numeric errcode, not code");
+    }
+    t.diagnostic(`Observed WAL lock error: ${JSON.stringify(busyErrors[0])}`);
+    assert.deepEqual(store.getContext(), scope);
+    assert.deepEqual(store.listMemory(scope), [entry]);
+    assert.equal(store.listProjects(account.id)[0].description, "Committed by lock holder");
+    assert.ok(store.listAudit(scope).some(event => event.action === "memory.created"));
+    // Check the actual migrated connection: another connection has its own FK setting.
+    assert.equal(migrationDb.prepare("PRAGMA journal_mode").get().journal_mode, "wal");
+    assert.equal(migrationDb.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
+    assert.deepEqual(migrationDb.prepare("PRAGMA foreign_key_check").all(), []);
+    assert.throws(() => migrationDb.prepare("UPDATE projects SET account_id=? WHERE id=?").run(randomUUID(), project.id), /FOREIGN KEY/);
+    assert.equal(store.listProjects(account.id)[0].id, project.id);
+    assert.ok(createAccount(store, "After lock").id);
+  } finally { store.close(); }
+});
+
+test("concurrent first launches serialize migrations and preserve all writers", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "atris-share-concurrent-"));
+  const workers = [];
+  t.after(async () => {
+    await Promise.all(workers.map(worker => worker.terminate()));
+    await rm(directory, { recursive: true, force: true });
+  });
   const module = new URL("../dist/packages/storage/src/store.js", import.meta.url).href;
-  await Promise.all(["A", "B"].map(name => new Promise((resolve, reject) => {
-    const worker = new Worker(`const {parentPort,workerData}=require('node:worker_threads'); (async()=>{ const {WorkspaceStore}=await import(${JSON.stringify(module)}); const store=new WorkspaceStore(workerData.path); store.createAccount({displayName:workerData.name,platform:'youtube'}); store.close(); parentPort.postMessage('ok'); })().catch(e=>{throw e;});`, { eval: true, workerData: { path, name } });
-    worker.once("message", resolve);
-    worker.once("error", reject);
-    worker.once("exit", code => { if (code !== 0) reject(new Error(`Worker exited ${code}`)); });
-  })));
-  const store = new WorkspaceStore(path);
-  try { assert.equal(store.listAccounts().length, 2); }
-  finally { store.close(); }
+  const names = ["A", "B", "C", "D"];
+  for (let round = 0; round < 3; round++) {
+    const path = join(directory, `workspace-${round}.sqlite`);
+    const gate = new Int32Array(new SharedArrayBuffer(4));
+    let ready = 0;
+    await Promise.all(names.map(name => new Promise((resolve, reject) => {
+      const worker = new Worker(`
+        const { parentPort, workerData } = require('node:worker_threads');
+        (async () => {
+          const { WorkspaceStore } = await import(${JSON.stringify(module)});
+          const gate = new Int32Array(workerData.gate);
+          parentPort.postMessage('ready');
+          if (Atomics.wait(gate, 0, 0, 10000) === 'timed-out') throw new Error('launch gate timed out');
+          const store = new WorkspaceStore(workerData.path);
+          try { store.createAccount({ displayName: workerData.name, platform: 'youtube' }); }
+          finally { store.close(); }
+        })().catch(error => { throw error; });
+      `, { eval: true, workerData: { path, name, gate: gate.buffer } });
+      workers.push(worker);
+      worker.once("message", () => {
+        if (++ready === names.length) {
+          Atomics.store(gate, 0, 1);
+          Atomics.notify(gate, 0);
+        }
+      });
+      worker.once("error", reject);
+      worker.once("exit", code => code === 0 ? resolve() : reject(new Error(`Worker exited ${code} in round ${round}`)));
+    })));
+    const store = new WorkspaceStore(path);
+    try { assert.deepEqual(store.listAccounts().map(account => account.displayName).sort(), names); }
+    finally { store.close(); }
+  }
 });
 
 test("diagnostics/notes redact recognizable secrets and data overrides must be absolute", t => {

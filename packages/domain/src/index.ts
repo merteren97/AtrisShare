@@ -1,4 +1,7 @@
-/** Publishing/media contracts remain planned; local workspace types live in workspace.ts. */
+/** Future cross-platform/AI contracts. Current validated runtime models live in workspace.ts, youtube.ts, media.ts and studio.ts. */
+export { editSchema, mediaProbeSchema, type MediaEdit, type MediaProbe } from "./media.js";
+export { publicationInputSchema, studioContextSchema, type StudioArtifact, type StudioPublication,
+  type StudioTimeline, type StudioRender, type PublicationPayload, type PublicationInput } from "./studio.js";
 export * from "./workspace.js";
 export * from "./youtube.js";
 export const SOCIAL_PLATFORMS = ["youtube", "x", "tiktok", "linkedin"] as const;

@@ -32,3 +32,16 @@ export async function request<T>(path: string, method = "GET", body?: unknown, s
   }
   return response.json() as Promise<T>;
 }
+export async function binaryRequest<T>(path: string, file: File, signal?: AbortSignal): Promise<T> {
+  runtime ??= bootstrap(); const config = await runtime;
+  const response = await fetch(`${config.origin}${path}`, { method: "POST", headers: { Authorization: `Bearer ${config.token}`, "Content-Type": "application/octet-stream" },
+    body: file, ...(signal ? { signal } : {}) });
+  if (!response.ok) { const value = await response.json().catch(() => ({})) as {error?:string}; throw new ApiError(value.error ?? "operation_failed"); }
+  return response.json() as Promise<T>;
+}
+export async function mediaBlob(path: string, signal?: AbortSignal): Promise<Blob> {
+  runtime ??= bootstrap(); const config = await runtime;
+  const response = await fetch(`${config.origin}${path}`, { headers: { Authorization: `Bearer ${config.token}` }, cache: "no-store", ...(signal ? { signal } : {}) });
+  if (!response.ok) { const value = await response.json().catch(() => ({})) as {error?:string}; throw new ApiError(value.error ?? "operation_failed"); }
+  return response.blob();
+}

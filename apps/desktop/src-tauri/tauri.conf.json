@@ -11,11 +11,11 @@
   },
   "app": {
     "windows": [{
-      "label": "main", "title": "AtrisShare — Local Preview", "width": 1260, "height": 830,
+      "label": "main", "title": "AtrisShare", "width": 1260, "height": 830,
       "minWidth": 740, "minHeight": 560, "center": true, "backgroundColor": "#141719"
     }],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; object-src 'none'; frame-src 'none'; base-uri 'self'"
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://i.ytimg.com https://*.ytimg.com https://img.youtube.com; media-src 'self' blob:; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:*; object-src 'none'; frame-src 'none'; base-uri 'self'"
     }
   },
   "bundle": {

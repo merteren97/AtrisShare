@@ -1,13 +1,16 @@
 # Platform integration plan
 
-**YouTube connection is implemented; live acceptance is pending.** Desktop OAuth,
-channel/subject verification, vault storage, refresh and disconnect/revoke have
-controlled-provider tests. [Setup and current limits](YOUTUBE.md). YouTube publishing
-and all other connectors remain planned; access products/restrictions can change.
+**YouTube connection and supervised publishing code are implemented; live acceptance
+is pending.** OAuth/PKCE, channel/subject verification, vault storage, refresh/
+disconnect, owned catalog pagination/linking, immutable review, resumable upload,
+processing receipts and reconciliation have controlled-provider coverage, not live
+Google acceptance. Live use needs a user-owned OAuth app, authorized channel and
+explicit human approval. [Setup and current limits](YOUTUBE.md). All other connectors
+remain planned; access products/restrictions can change.
 
-| Platform | Planned operations | Integration discovery required |
+| Platform | Operations / target | Integration discovery required |
 | --- | --- | --- |
-| YouTube | Account/channel verification, channel/video metadata, video upload, eligible short-form output | OAuth scopes, YouTube Data API quotas, upload/resumable flow, app review and visibility restrictions, Shorts eligibility |
+| YouTube | Implemented verification, owned metadata/linking and supervised video upload/reconciliation; short-form classification unverified | Live acceptance, OAuth/API review, quotas, privacy restrictions and Shorts eligibility |
 | X | Text composition and supported media posts | OAuth/user context, write/media product access, pricing tier, character/media constraints and rate limits |
 | TikTok | Short-video preparation and permitted publishing flow | Content Posting API eligibility/review, consent UX, account restrictions, upload/processing states and visibility options |
 | LinkedIn | Member and, where permitted, organization text/video posts | OAuth products/scopes, organization roles, media upload flow, API versioning and app review |
@@ -35,7 +38,7 @@ Official starting points:
 ## YouTube footage and Shorts
 
 Reading a channel's video list/metadata does not supply a source-media download
-API. Begin with user-provided local files and their channel/video mappings.
+API. Studio uses user-provided local files and ownership-verified channel/video mappings.
 Add only authorized source-import paths after validating availability and terms.
 Prior project timelines, transcript artifacts and channel metadata can inform
 clip selection without pretending the channel catalog contains editable footage.

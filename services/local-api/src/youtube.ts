@@ -46,6 +46,7 @@ export class YouTubeService {
     this.clock = options.now ?? Date.now;
   }
   setup(): YouTubeSetup { return { configured: this.client !== null, available: this.client !== null && this.vault.status.available, scopes: YOUTUBE_SCOPES }; }
+  isBusy(accountId: string): boolean { return this.accountLocks.has(accountId); }
   private ready(): GoogleDesktopClient {
     if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
     if (!this.vault.status.available) throw new WorkspaceError(409, "vault_unavailable");
@@ -142,16 +143,18 @@ export class YouTubeService {
     return { ...client, accessToken: tokens.access_token, refreshToken, expiresAt: this.clock() + tokens.expires_in * 1000, scopes };
   }
   private async persist(accountId: string, destinationId: string, displayName: string, subject: string, credential: Credential,
-    previous: YouTubeConnection | null, valid: () => boolean): Promise<void> {
+    previous: YouTubeConnection | null, valid: () => boolean): Promise<YouTubeConnection> {
     // Copy-on-write vault generations prevent concurrent refresh/disconnect from overwriting a winner's credentials.
     const ref = `account:${randomUUID()}`;
     await this.vault.set(ref, JSON.stringify(credential));
+    let connection: YouTubeConnection;
     try {
       if (!valid()) throw new WorkspaceError(409, "connection_conflict");
-      this.store.connectYouTube({ accountId, destinationId, displayName, providerSubjectId: subject, credentialRef: ref,
+      connection = this.store.connectYouTube({ accountId, destinationId, displayName, providerSubjectId: subject, credentialRef: ref,
         grantedScopes: credential.scopes, expectedRevision: previous?.revision ?? null });
     } catch (error) { await this.vault.delete(ref).catch(() => undefined); throw error; }
     if (previous?.credentialRef) await this.vault.delete(previous.credentialRef).catch(() => undefined);
+    return connection;
   }
   private async locked<T>(value: YouTubeAccountInput, operation: (connection: YouTubeConnection, signal: AbortSignal) => Promise<T>): Promise<T> {
     if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing");
@@ -169,28 +172,63 @@ export class YouTubeService {
       return credentialSchema.parse(JSON.parse(value ?? "null"));
     } catch { throw new WorkspaceError(409, "youtube_reauth_required"); }
   }
-  async verify(value: YouTubeAccountInput): Promise<{ verified: true }> {
+  private assertCurrent(connection: YouTubeConnection, signal: AbortSignal): void {
+    if (signal.aborted) throw new WorkspaceError(503, "runtime_closing");
+    const current = this.store.getYouTubeConnection(connection.accountId, connection.destinationId);
+    if (current.accountId !== connection.accountId || current.destinationId !== connection.destinationId ||
+        current.revision !== connection.revision || current.providerSubjectId !== connection.providerSubjectId ||
+        current.credentialRef !== connection.credentialRef) {
+      throw new WorkspaceError(409, "connection_conflict");
+    }
+    if (this.store.listAccounts().find(item => item.id === connection.accountId)?.status !== "connected") {
+      throw new WorkspaceError(409, "youtube_reauth_required");
+    }
+  }
+  private async verified<T>(value: YouTubeAccountInput, singleChannel: boolean,
+    operation: (accessToken: string, signal: AbortSignal, guard: () => void) => Promise<T>): Promise<T> {
     return this.locked(value, async (connection, signal) => {
-      if (this.store.listAccounts().find(item => item.id === connection.accountId)?.status !== "connected") throw new WorkspaceError(409, "youtube_reauth_required");
+      this.assertCurrent(connection, signal);
+      let accessToken: string;
+      let guard: () => void;
       try {
         const saved = await this.readCredential(connection);
+        this.assertCurrent(connection, signal);
         const client: GoogleDesktopClient = { clientId: saved.clientId, ...(saved.clientSecret ? { clientSecret: saved.clientSecret } : {}) };
         const tokens = await this.provider.tokens(client, { grant_type: "refresh_token", refresh_token: saved.refreshToken }, signal);
+        this.assertCurrent(connection, signal);
         const scopes = this.provider.scopes(tokens, saved.scopes);
         const identity = await this.provider.identity(tokens.access_token, signal);
+        this.assertCurrent(connection, signal);
         const channel = identity.channels.find(item => item.id === connection.destinationId);
-        if (!channel) throw new WorkspaceError(409, "youtube_channel_mismatch");
+        if (!channel || (singleChannel && identity.channels.length !== 1)) throw new WorkspaceError(409, "youtube_channel_mismatch");
         if (identity.subject !== connection.providerSubjectId) throw new WorkspaceError(409, "youtube_identity_mismatch");
-        await this.persist(connection.accountId, connection.destinationId, channel.title, identity.subject,
-          this.credential(client, tokens, scopes, tokens.refresh_token ?? saved.refreshToken), connection, () => !signal.aborted);
-        return { verified: true };
+        const persisted = await this.persist(connection.accountId, connection.destinationId, channel.title, identity.subject,
+          this.credential(client, tokens, scopes, tokens.refresh_token ?? saved.refreshToken), connection,
+          () => { this.assertCurrent(connection, signal); return true; });
+        // persist also awaits old-generation cleanup. Another runtime may have fenced
+        // this connection during that await; never hand its token to the operation.
+        guard = () => this.assertCurrent(persisted, signal);
+        guard();
+        accessToken = tokens.access_token;
       } catch (error) {
         if (error instanceof WorkspaceError && ["youtube_reauth_required", "youtube_missing_scope", "youtube_channel_mismatch", "youtube_identity_mismatch", "youtube_access_denied"].includes(error.code)) {
           this.store.setYouTubeStatus(connection, "reauth-required");
         }
         throw error;
       }
+      // Keep the account lock and shutdown tracking through the entire callback.
+      // Operation errors are not identity failures and must not mutate account status.
+      return operation(accessToken, signal, guard);
     });
+  }
+  async verify(value: YouTubeAccountInput): Promise<{ verified: true }> {
+    return this.verified(value, false, async () => ({ verified: true }));
+  }
+  /** Internal credential boundary. Never expose the callback token through HTTP/UI.
+   * Call guard synchronously after awaits, immediately before initiation and each chunk. */
+  async withVerified<T>(value: YouTubeAccountInput,
+    operation: (accessToken: string, signal: AbortSignal, guard: () => void) => Promise<T>): Promise<T> {
+    return this.verified(value, true, operation);
   }
   async disconnect(value: YouTubeAccountInput, revoke: boolean): Promise<{ disconnected: true }> {
     return this.locked(value, async (connection, signal) => {

@@ -1,13 +1,26 @@
 # Changelog
 
-## Unreleased — YouTube connection slice
+## Unreleased — supervised YouTube and single-clip Studio
 
 - Desktop OAuth with PKCE S256, one-use state, expected channel and Google subject verification.
 - Encrypted account credentials, refresh/re-verification, local disconnect and optional Google grant revocation.
 - Transactional v1 migration preserving projects/memory, copy-on-write credential generations and stale-writer fencing.
 - TR/EN Accounts connection states, pending-session recovery, identity/scope inspection and disconnect confirmation.
-- Controlled-provider regression coverage and setup documentation. Live authorized-channel acceptance is pending;
-  local-media import, publication approval, upload/processing and receipts are not implemented yet.
+- Immutable managed media with SHA-256, account/project isolation and up to 2 GiB streaming imports:
+  self-contained MP4-family (`.mp4`/`.mov`) and WebM only; `.mkv` requires WebM content, not general Matroska.
+- Authenticated Blob preview/download capped at 256 MiB; owned-channel catalog pagination and verified local-file linking.
+- Immutable publication payload/digest, explicit single-use human approval with a 10-minute dispatch window,
+  resumable upload, processing checks, durable receipts and reconciliation. Session URLs are encrypted in the vault;
+  durable ownership leases fence competing workers. Ambiguous/missing sessions never trigger blind re-initiation.
+- Persistent dispatch revocation on upload cancellation; remote effects already accepted cannot be promised undone.
+- Manual single-clip trim, original/vertical/square crop, caption and audio gain; revisioned save, undo/redo,
+  reopen and export progress/cancel. Retry creates a new export; multi-track, split and proxies remain unimplemented.
+- External FFmpeg/FFprobe via `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or `PATH`; no media binaries bundled.
+  H.264/AAC export and caption `drawtext`; temporary GPL-enabled verification tools are not distribution artifacts.
+- Custom Windows titlebar and kill-on-close Windows Job Object ownership of the runtime/media process tree.
+- Controlled-provider regression coverage exercises actual services, not live Google. Phase 2 code is implemented;
+  live connection/publication acceptance requires a user-owned OAuth app, authorized channel and human approval.
+  Phase 3 is a partial single-clip slice. AI/MCP, notifications, scheduling and other connectors remain planned.
 
 ## 0.1.0-preview.1 — Local workspace
 

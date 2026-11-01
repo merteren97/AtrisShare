@@ -1,9 +1,12 @@
-# YouTube connection — Phase 2, first slice
+# YouTube — supervised publishing preview
 
-The Desktop OAuth connection, refresh, channel verification and disconnect paths
-are implemented. Automated tests use a controlled Google transport; **an authorized
-live Google account/channel has not yet been accepted**. Upload, publication intents,
-human approval and receipts are the next slice. This build does not upload videos.
+Phase 2 code implements Desktop OAuth, refresh, channel verification, disconnect,
+owned catalog pagination/linking, local-media import, immutable publication review,
+resumable upload, processing and receipts/reconciliation. Tests exercise the actual
+services through controlled provider transports, **not live Google**. Live connection
+and publication acceptance are pending; neither is claimed here. Any live Google
+flow requires a user-owned OAuth application, authorized channel and explicit human
+approval before upload. Connecting an account alone does not authorize publication.
 
 ## Configure your Desktop OAuth application
 
@@ -44,8 +47,7 @@ before upload acceptance rather than assuming historical restrictions still appl
 4. Choose the correct Google identity and YouTube channel/Brand Account. Grant:
    - `openid` — obtain the provider subject through the authenticated userinfo API;
    - `https://www.googleapis.com/auth/youtube.readonly` — verify/read the channel;
-   - `https://www.googleapis.com/auth/youtube.upload` — permission needed by the
-     forthcoming supervised upload flow; this slice does not use it to upload.
+   - `https://www.googleapis.com/auth/youtube.upload` — supervised resumable uploads.
 5. Return to AtrisShare. The API checks granted scopes, Google subject and the
    `channels.list(mine=true)` result against your expected ID before storing anything.
 
@@ -59,9 +61,62 @@ that real account's projects/memory and refuses a different subject or channel.
 **Verify connection** exchanges the refresh token and checks identity/channel again.
 Missing permissions, revoked grants or an identity mismatch block the target and
 request reconnection. Network failures are reported without revealing provider
-response bodies. Each future external operation must repeat its capability and
-destination checks; the saved `connected` badge records the last verification,
+response bodies. Catalog/link/upload operations refresh and re-verify identity,
+scopes and destination; publishing requires exactly one matching channel. The
+saved `connected` badge records the last verification,
 not a permanent guarantee of access or authorization to publish.
+
+## Studio media and owned catalog
+
+Select an account **and project**, then open **Studio**. Imports stream into immutable
+managed storage with SHA-256 and a **2 GiB** limit. Supported content is self-contained
+MP4-family (`.mp4`/`.mov`) or WebM. A `.mkv` name is accepted only for WebM content;
+general Matroska, playlists and external media references are rejected. Browser
+preview/download uses authenticated Blobs up to **256 MiB**, never bearer-bearing
+URLs; playback also depends on WebView codecs.
+
+The **Channel** tab reads the verified destination's official uploads playlist in
+pages of up to 50 items, returning owned-video metadata and a next-page token. It
+does not download source footage. Link a selected local artifact to a channel video;
+the server verifies video ownership again with `videos.list`. Artifacts, links,
+timelines, exports and publication records remain account/project scoped; the remote
+catalog request is account/destination scoped.
+
+The manual editor saves one clip's trim, centered original/9:16/square crop, static
+caption and audio gain with optimistic revisions, undo/redo and reopen. Export
+creates a new artifact with progress/cancellation; retry means a new export from
+the saved revision. The player previews the stored source/export, not a live render
+of unsaved fields. Multi-track, split and proxies are not implemented. Inspection
+and export require external FFprobe/FFmpeg; see [media tooling](../packages/media-engine/README.md).
+
+## Review, dispatch and reconciliation
+
+1. Prepare title, description, visibility, made-for-kids and subscriber-notification
+   settings for a managed artifact. Creating a draft does not upload anything.
+2. Review the exact destination, metadata, artifact bytes/MIME/SHA-256 and canonical
+   payload digest. The immutable version-1 payload binds account, project, destination
+   and artifact. Changes require a new draft and review.
+3. Explicit **Approve upload** atomically consumes the review state, granting one
+   dispatch with a **10-minute** window. Durable five-minute owner leases, renewed
+   during work, fence competing claims. Identity/connection fencing, lease ownership,
+   approval expiry and persistent revocation are checked before initiation/chunks.
+   Upload bytes are copied to a temporary snapshot and verified against the approved hash.
+4. The resumable session URL is encrypted in the vault; SQLite keeps only its
+   reference. Upload progress and provider video ID persist. A final upload receipt
+   means **processing**, not success; an explicit provider processing-success result
+   produces the durable success receipt and scoped publication memory.
+5. An interrupted/ambiguous upload becomes **uncertain**. **Reconcile** queries the
+   existing session or recorded video before continuing. Remaining byte dispatch
+   still requires the original unexpired, unrevoked approval. A missing/expired or
+   unrecorded session never triggers blind re-initiation; no automatic transport
+   retries or exactly-once guarantee are offered. Inspect remote state before
+   deliberately creating another draft.
+
+Cancelling a review prevents its approval. Cancelling an uploading/uncertain record
+**persists dispatch revocation** and aborts local work; later reconciliation may read
+remote status but cannot send more bytes. It cannot undo an in-flight request or
+remote effects already accepted. Processing-only or terminal records currently
+reject cancellation; cancellation is not a remote delete/unpublish operation.
 
 ## Disconnect and revoke
 
@@ -86,7 +141,8 @@ referenced vault records manually.
 ## Local API
 
 All `/api/` routes require the per-launch bearer token and allowed origin/host.
-Bodies are strict JSON and no route accepts caller-supplied access/refresh tokens.
+Mutation bodies are strict JSON except the raw media-import stream. No route accepts
+caller-supplied access/refresh tokens or resumable session URLs.
 
 | Method | Route | Body / result |
 | --- | --- | --- |
@@ -97,6 +153,11 @@ Bodies are strict JSON and no route accepts caller-supplied access/refresh token
 | POST | `/api/youtube/sessions/:id/cancel` | Cancel the pending request |
 | POST | `/api/youtube/verify` | `{accountId, destinationId}` |
 | POST | `/api/youtube/disconnect` | `{accountId, destinationId, revoke: boolean}` |
+| GET | `/api/youtube/catalog?accountId=…&destinationId=…&pageToken=…` | Owned metadata and `nextPageToken`; omit `pageToken` for the first page |
+
+Studio media, timeline, render and publication routes are documented in
+[the local API reference](LOCAL-WORKSPACE.md#studio-api). `pageToken` is a pagination
+cursor, not a credential; bearer tokens remain in headers.
 
 Only `GET /oauth/youtube/callback` and its static result page bypass bearer auth;
 the callback requires the matching one-use state and PKCE exchange. It redirects
@@ -105,11 +166,12 @@ CSP. It never renders provider text, codes, tokens or the runtime session key.
 
 ## Acceptance still required
 
-Using an authorized test channel and user-owned Desktop OAuth client: connect,
-cancel/deny, refresh, restart and disconnect/revoke. Then implement and accept
-local-media import, immutable publication digest, per-attempt human approval,
-resumable upload, processing and receipt/reconciliation. Connecting an account
-does not authorize any of those publication side effects.
+Using a user-owned Desktop OAuth client and authorized test channel: accept live
+connect/cancel/deny, refresh, restart and disconnect/revoke, then the implemented
+import → review → explicit approval → upload → processing → receipt/reconciliation
+flow. Choose visibility deliberately; public publication needs its own explicit
+human review. Controlled-provider tests are not evidence of live Google acceptance.
+Google app verification, API audit, quota and privacy restrictions still apply.
 
 Official references (checked 2026-11-01):
 

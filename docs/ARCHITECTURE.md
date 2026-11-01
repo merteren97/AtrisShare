@@ -1,10 +1,13 @@
-# Architecture — local workspace and planned publishing
+# Architecture — local workspace, Studio and supervised publishing
 
 Phase 1 implements the React/Tauri desktop, authenticated loopback API, SQLite
-accounts/projects/context/memory/audit and a Windows DPAPI vault port. The first
-Phase 2 slice adds YouTube OAuth/PKCE, subject/channel verification, refresh and
-disconnect/revoke with controlled-provider tests; live acceptance is pending.
-AI, MCP, media processing, queues, approval and publishing remain target boundaries.
+accounts/projects/context/memory/audit and a Windows DPAPI vault port. Phase 2 code
+adds YouTube OAuth/PKCE, subject/channel verification, refresh/disconnect, owned
+catalog/linking, managed media, approval, resumable upload and receipt/reconciliation.
+Provider tests are controlled, not live Google. Live connection/publication acceptance
+is pending and requires a user-owned OAuth app, authorized channel and human approval.
+Phase 3 is a partial single-clip editor. AI/MCP, multi-track/split/proxies, standalone
+queues and scheduling remain planned.
 See [local workspace details](LOCAL-WORKSPACE.md) and [YouTube](YOUTUBE.md).
 
 ## Local-first application
@@ -12,24 +15,32 @@ See [local workspace details](LOCAL-WORKSPACE.md) and [YouTube](YOUTUBE.md).
 ```mermaid
 flowchart TD
     Desktop[React / Tauri desktop] --> API[Authenticated loopback API]
-    CLI[Selected AI CLI or external MCP client] --> MCP[Scoped MCP tools]
-    MCP --> API
-    API --> DB[(SQLite: projects, jobs, memory, audit)]
-    API --> Vault[OS credential vault]
-    API --> Queue[Durable worker coordinator]
-    Queue --> Media[FFprobe / FFmpeg / transcription]
-    Queue --> Gate[Human approval + destination verification]
-    Gate --> Social[Official social API connectors]
-    API --> AI[AI runtime adapter / model discovery]
-    AI --> CLI
+    API --> DB[(SQLite: workspace, artifacts, timelines, jobs)]
+    API --> Vault[Windows DPAPI vault]
+    API --> Studio[Studio tasks + durable ownership leases]
+    Studio --> Media[Managed files + external FFprobe / FFmpeg]
+    Studio --> Gate[Human approval + destination verification]
+    Gate --> Social[Official YouTube API transport]
+    CLI[Planned AI CLI / external MCP client] -.-> MCP[Planned scoped MCP tools]
+    MCP -.-> API
+    API -.-> Queue[Planned standalone queue / schedules]
+    API -.-> AI[Planned AI runtime adapter]
+    AI -.-> CLI
 ```
 
-Target stack: React + TypeScript, Tauri 2, local Node.js services, SQLite, an OS
-credential vault, FFmpeg/FFprobe and the official MCP SDK. FFmpeg and MCP are
-future dependencies. SQLite currently uses the API built into the pinned Node
-22 runtime, avoiding a separately compiled native addon. Windows native startup,
+Current stack: React + TypeScript, Tauri 2, local Node.js services, SQLite, Windows
+DPAPI and external FFmpeg/FFprobe. MCP is planned. SQLite uses the API built into
+the pinned Node 22 runtime, avoiding a separately compiled native addon. Windows native startup,
 CRUD and shutdown have been exercised; macOS/Linux desktop packages remain
 unverified. Source checks are configured for Windows/Linux CI.
+
+Studio and YouTube orchestration currently live in `services/local-api`; the
+`services/worker` directory reserves the future standalone queue boundary. Windows
+uses a custom titlebar and starts Node suspended inside a kill-on-close Job Object
+before resuming it. The job owns Node and its media descendants; native closure or
+owner termination kills that tree. Local tasks stop on close, with no tray/background
+or always-on scheduler. Remote effects already accepted cannot be rolled back by
+stopping a process.
 
 AtrisHub is the ecosystem website. No account, entitlement, hosted storage or
 execution dependency on AtrisHub is assumed by this template. Any future
@@ -56,10 +67,37 @@ integration needs a separate product decision.
 
 ## Media and AI
 
-Keep source media immutable. Store revisioned timeline operations and generated
-artifacts separately. Manual actions and AI proposals share validated timeline
-operations, with preview, accept/reject and undo behavior. A proposal based on
-an older timeline revision cannot silently replace newer edits.
+### Implemented single-clip slice
+
+Managed import streams up to **2 GiB**, validates self-contained MP4-family or WebM
+content and records SHA-256/bytes/MIME. Accepted names are `.mp4`, `.mov`, `.webm`
+and `.mkv`; `.mkv` still requires WebM content, not general Matroska. Container
+inspection rejects playlists/external references before demuxing. Immutable UUID
+files are published exclusively; generated exports get separate artifacts.
+Authenticated Blob preview/download is capped at **256 MiB**, with no bearer URLs
+and WebView-dependent codec support. SQLite and media are not encrypted; vault
+records alone use DPAPI.
+
+The manual editor persists a single clip's trim, centered original/vertical/square
+crop, static caption and gain. Save/undo/redo use optimistic revisions; reopening
+loads the saved cursor/history. Export captures a saved revision and reports
+progress/cancellation; retry starts a new export. Expired running-render leases
+surface interruption, not automatic resume. The player shows stored source/export
+bytes, not a live preview of unsaved edits. Multi-track, split and proxies are absent.
+Successful exports and publications add scoped history notes.
+
+External executables resolve from `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or
+`PATH`. Argument arrays, restricted environment/protocols, bounded process output
+and timeouts avoid a shell or network demuxing. Export uses H.264 `libx264`, AAC
+when audio exists, and static caption text files with `drawtext`. No FFmpeg/FFprobe
+binary is bundled. Temporary GPL-enabled verification tools are not distribution
+artifacts; redistribution remains a separate build/codec licensing decision.
+
+### Planned AI extension
+
+Manual edits and future AI proposals should share validated timeline operations,
+with preview, accept/reject and undo behavior. A proposal based on an older revision
+must not silently replace newer edits.
 
 Clip discovery uses timestamped transcripts and, when available, scene/audio
 and visual signals. Candidates include boundaries, evidence and a rationale;
@@ -76,44 +114,55 @@ MCP tools expose inspection, transcription, clip suggestions, edit proposals,
 preview renders, draft preparation and approval requests. They validate input,
 enforce account/project/artifact scope and support cancellation. No tool accepts
 arbitrary shell commands, reads the credential vault, approves or publishes.
-Workspace runtime schemas and scope checks are implemented. Media/publishing
-contracts alone do not enforce the future MCP/publishing rules.
+Workspace/media runtime schemas and scope checks are implemented; an MCP server
+and its AI authorization boundary are not implemented.
 
 ## Publication lifecycle
 
-Every destination is a separate immutable publication intent and job. Canonical
-payload serialization/digesting must cover account, platform, destination,
-text/title, visibility, schedule, metadata and every media artifact hash/revision.
-The exact schema and canonicalization will be completed before live publication.
+The implemented YouTube version-1 payload has fixed-order canonical serialization
+and a SHA-256 digest binding account/project/destination, artifact ID/hash/bytes/MIME,
+title, description, visibility, made-for-kids and subscriber-notification settings.
+There is no schedule field or mutable payload endpoint; changes require a new draft.
 
-1. Validate the draft against current connector capabilities.
-2. Snapshot the payload and account/destination. Create a durable job.
-3. At dispatch time (immediately or when a scheduled occurrence becomes due),
-   notify the user and enter `awaiting-approval`.
-4. Show account identity, destination, final media/text/metadata, visibility and
-   planned time. A trusted UI records an explicit user decision with an expiry.
-5. For an approved job, recheck identity, scopes, payload digest, artifact hashes,
-   approval expiry/revocation and worker ownership immediately before sending.
-   Consume the approval transactionally so competing workers cannot reuse it.
-6. Record the provider receipt and audit event, or a classified failure.
+1. Verify the scoped artifact hash and create an immutable `review` record.
+2. Show destination, media/hash, metadata and digest in the trusted review UI.
+3. An explicit human approval transaction checks the digest, consumes `review`
+   once, sets a **10-minute dispatch window** and claims a durable owner lease.
+4. Refresh/re-verify Google subject, scopes and exactly one matching channel.
+   Fence changed connections and recheck lease, expiry and dispatch revocation
+   immediately before initiation/chunks. Upload a temporary hash-verified byte snapshot.
+5. Encrypt the resumable session URL in the vault; persist only its reference in
+   SQLite. Checkpoint progress/video ID under the five-minute lease with heartbeat.
+6. A final provider ID enters `processing`; explicit processing success creates a
+   durable success receipt, then optional scoped publication memory.
 
-Editing a payload, replacing media, changing its schedule or switching its target
-invalidates approval. Rejection/cancellation prevents dispatch. AI cannot create
-an approval by returning a tool result or setting a field on a request.
+No AI/MCP approval path exists. The runtime bearer represents the trusted local
+session, not a separate human identity; its approve route must only be used after
+the human review. Account connection and memory content never authorize dispatch.
 
 ```text
-scheduled -> awaiting-approval -> ready -> publishing -> published
-                  |                |          |
-          rejected / expired       |      reconciling -> published / failed
-                                   +-> expired / failed
-non-terminal work -> cancelled (provider-specific cancellation limits apply)
+review -> uploading -> processing -> succeeded / failed
+   |          |
+cancelled  uncertain -> reconcile existing session / recorded video
 ```
 
-An upload/processing step that creates externally visible state also needs an
-appropriate approval boundary. Platform-specific multi-stage uploads, posts and
-processing polling must document where irreversible effects occur.
+Upload initiation itself is approval-gated. An expired owner appears interrupted/
+uncertain. Reconciliation queries existing remote state; it may send remaining
+bytes only while the original approval remains valid and unrevoked. Missing or
+unrecorded sessions never cause blind re-initiation. There are no automatic
+transport retries or exactly-once guarantees.
+
+Review cancellation prevents approval. Uploading/uncertain cancellation persists
+dispatch revocation and aborts local work; later status reconciliation cannot
+authorize more bytes. In-flight/already accepted remote effects cannot be promised
+undone. Processing/terminal cancellation is rejected; there is no delete/unpublish
+operation. Session URL allowlists, redirect rejection, bounded provider JSON and
+fixed error codes keep credentials/provider bodies out of frontend responses.
 
 ## Scheduling, recovery and duplicate prevention
+
+Scheduling and the general worker queue below are planned. Current Studio leases
+provide publication/render ownership, not a recurring scheduler.
 
 - Store the IANA time zone and local recurrence rule alongside each computed UTC
   occurrence. Define DST-gap/overlap behavior explicitly before implementation.
@@ -132,8 +181,10 @@ processing polling must document where irreversible effects occur.
 
 ## Validation milestones
 
-Before live publishing: account isolation, stale/replayed approval, identity
-mismatch, expired/revoked token, duplicate worker and ambiguous-timeout tests.
+Controlled tests cover account isolation, stale/replayed approval, identity
+mismatch, expired/revoked approval, duplicate claims and ambiguous-upload recovery.
+Live connection/publication acceptance still needs the user's OAuth app, authorized
+channel and explicit human review; controlled tests are not live Google evidence.
 Before scheduling: restart, DST, sleep/offline, missed occurrence, cancellation
 and per-occurrence confirmation tests. Before release: native desktop rendering,
 notification flow, clean-machine packaging and authorized test-account evidence.

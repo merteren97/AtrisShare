@@ -27,11 +27,20 @@ kaynak bilgisi ile öneri/onaylı durumları tutulan notlar ekleyebilir, düzenl
 ve silebilirsin. Koyu/açık tema ve Türkçe/İngilizce arayüz vardır. Windows DPAPI
 tabanlı dahili kimlik kasası hazırdır; demo hedefler sosyal token tutmaz.
 
-**Aşama 2 sürüyor:** YouTube Desktop OAuth/PKCE, beklenen kanal ve Google kimliği
-doğrulaması, kasada saklama, token yenileme ve bağlantı/izin iptali uygulanmıştır.
-Kontrollü sağlayıcı testleri vardır; yetkili gerçek kanal kabulü henüz yapılmadı.
-[YouTube kurulum ve sınırları](docs/YOUTUBE.md). Video işleme, AI/MCP, bildirimler,
-zamanlayıcı, diğer sosyal bağlantılar ve gerçek paylaşım **henüz uygulanmamıştır**.
+**Aşama 2 kodu uygulandı; canlı kabul bekliyor:** YouTube Desktop OAuth/PKCE,
+kimlik/kanal doğrulaması, kasa, yenileme/bağlantı iptali, sahip olunan videoların
+sayfalı kataloğu ve yerel dosya eşleme, değişmez yayın incelemesi, sürdürülebilir
+yükleme, işleme kontrolü ve sonuç/uzlaştırma akışları vardır. Testler gerçek servisleri
+kontrollü sağlayıcılarla çalıştırır; **canlı Google testi değildir**. Canlı bağlantı
+veya yayın için sana ait OAuth uygulaması, yetkili kanal ve açık insan onayı gerekir;
+canlı Google kabulü yapıldığı iddia edilmez. [YouTube rehberi](docs/YOUTUBE.md).
+
+**Aşama 3 kısmi:** Stüdyo, değişmez yönetilen medya ve manuel tek klip editörü sunar:
+kırpma, özgün/dikey/kare kadraj, altyazı, ses kazancı, revizyonlu kaydetme,
+geri al/yinele, yeniden açma ve ilerleme/iptal destekli dışa aktarma. Tekrar denemek
+yeni bir dışa aktarma başlatır. Çok kanallı kurgu, bölme ve proxy uygulanmadı.
+Windows'ta özel başlık çubuğu ve kapanışta runtime/medya süreç ağacını sonlandırma
+vardır. AI/MCP, bildirimler, zamanlayıcı ve diğer sosyal bağlantılar planlanır.
 İmzalı kurulum paketi yayınlanmadı.
 
 ## Planlanan kullanım akışı
@@ -46,10 +55,12 @@ zamanlayıcı, diğer sosyal bağlantılar ve gerçek paylaşım **henüz uygula
 7. Her paylaşım öncesinde bildirim al; son içeriği ve hedef hesabı onayla.
    Onaylanmayan zamanlanmış işler bekler; kendiliğinden yayınlanmaz.
 
-Hesap/proje kapsamlı notlarla marka dili, hedef kitle ve kararlar şimdiden tutulabilir.
-Otomatik düzenleme/paylaşım geçmişi ve AI bağlam getirme sonraki aşamalarda gelir.
-Her hafıza işleminde açık kapsam kontrol edilir; ileride paylaşım onayları da
-oluşturuldukları hesap ve hedefe bağlı kalacaktır.
+Hesap/proje kapsamlı notlarla marka dili, hedef kitle ve kararlar tutulabilir;
+başarılı dışa aktarma/yayın işlemleri kapsamlı geçmiş notları ekler. AI bağlam getirme planlanır.
+Her hafıza işleminde açık kapsam kontrol edilir; mevcut YouTube onayları hesap,
+proje, hedef, metadata ve dosya SHA-256 değerine bağlıdır. Açık onay tek kullanımlıktır
+ve gönderim için 10 dakika geçerlidir. İptal, gönderim yetkisinin geri alınmasını
+kalıcı tutar; uzakta gerçekleşmiş etkileri geri alma garantisi vermez.
 
 ## AI seçimi ve video araçları
 
@@ -66,7 +77,8 @@ isteyebilir; insan kararını kabul edip yayınlama yapabilen taraf güvenilir u
 
 ## Platform durumu
 
-YouTube bağlantısı geliştirme aşamasındadır; yayınlama ve diğer bağlayıcılar planlanır.
+YouTube bağlantı ve insan onaylı yayın kodu kontrollü sağlayıcı testleriyle uygulanmıştır;
+canlı bağlantı/yayın kabulü bekler. Diğer bağlayıcılar planlanır.
 Gerçek özellikler resmi
 API’ye, hesap izinlerine, uygulama incelemesine, kotalara ve erişim paketlerine
 bağlıdır. YouTube video listesine erişmek kaynak videoyu indirme yetkisi veya
@@ -83,8 +95,9 @@ npm ci
 npm run check
 ```
 
-`check`; tür kontrollerini, API/veri/OAuth testlerini ve üretim arayüz/core derlemesini
-çalıştırır. Sosyal sağlayıcılara bağlanmaz veya paylaşım yapmaz.
+`check`; tür kontrollerini, veri/API/OAuth/yayın/medya/Stüdyo testlerini ve üretim
+arayüz/core derlemesini çalıştırır. Sağlayıcı testleri kontrollü transport kullanır;
+canlı Google'a bağlanmaz veya paylaşım yapmaz. Gerçek medya fixture'ları harici araç gerektirir.
 
 ```bash
 npm run dev        # Tarayıcı geliştirmesi: http://127.0.0.1:1438
@@ -94,15 +107,25 @@ npm run preview    # Özellik/durum manifestosu (arayüz sunucusu değildir)
 
 Native geliştirme için ayrıca Rust stable, Tauri 2 platform gereksinimleri,
 Windows'ta WebView2 ve Microsoft C++ Build Tools gerekir. `npm ci`, npm komutları
-ve paketleme için sabitlenen Node 22 çalışma zamanını kurar. Bu aşamada FFmpeg
-gerekmez. Node 22'nin dahili SQLite API'si upstream'de deneysel işaretlidir;
+ve paketleme için sabitlenen Node 22 çalışma zamanını kurar.
+Node 22'nin dahili SQLite API'si upstream'de deneysel işaretlidir;
 ayrıca native SQLite eklentisi derlemeye gerek yoktur.
+
+Medya inceleme/dışa aktarma için **harici FFmpeg ve FFprobe** kullanılır:
+`ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` veya `PATH`. İkili medya aracı paketlenmez.
+Dışa aktarma H.264 (`libx264`), ses için AAC, altyazı için `drawtext` gerektirir.
+İçe aktarma sınırı **2 GiB**; desteklenen içerik kendi kendine yeterli MP4 ailesi
+(`.mp4`/`.mov`) veya WebM'dir. `.mkv` yalnızca WebM içeriyorsa kabul edilir; genel
+Matroska desteği yoktur. Oturum doğrulamalı Blob ön izleme/indirme **256 MiB** ile
+sınırlıdır; oynatma WebView codec desteğine bağlıdır. FFprobe yoksa geçerli dosyalar
+inceleme bilgisi olmadan saklanabilir; düzenleme süre bilgisi ve kullanılabilir araçlar gerektirir.
 
 Önce **demo hesap** ekle, bir proje oluştur ve **Hafıza** bölümünü aç. Hesap notları
 için **Hesap geneli**, proje notları için ilgili projeyi seç; bu kapsamlar bilinçli
 olarak ayrı tutulur. Seçim ve notlar yeniden başlatmada korunur.
 Windows'ta gerçek YouTube kanalı bağlamak için Desktop OAuth istemcini yapılandır
 ve **Hesaplar** bölümünü kullan; [bağlantı rehberini](docs/YOUTUBE.md) izle.
+Medya içe aktarmak, düzenlemeleri kaydetmek ve dışa aktarmak için proje seçip **Stüdyo**'yu aç.
 
 Veriler Windows'ta `%LOCALAPPDATA%\AtrisShare`, macOS'ta `~/Library/Application
 Support/AtrisShare`, Linux'ta `$XDG_DATA_HOME/AtrisShare` veya
@@ -124,24 +147,25 @@ packages/
   domain/            Veri sözleşmeleri ve runtime doğrulama şemaları
   ai-bridge/         Planlanan CLI/runtime entegrasyonu
   connectors/        Planlanan resmi sosyal medya API’leri
-  media-engine/      Planlanan zaman çizelgesi ve video işleme
+  media-engine/      Yönetilen medya, FFprobe incelemesi ve tek klip FFmpeg çıktısı
   storage/           SQLite migration/repository ve DPAPI kasa arayüzü
 services/
   local-api/         Oturum doğrulamalı loopback uygulama API’si
   mcp-server/        Planlanan hesap/proje kapsamına bağlı AI araçları
-  worker/            Planlanan video ve paylaşım işçileri
+  worker/            Ayrı kuyruk/zamanlayıcı servisi için ayrılmış sınır
 docs/                Herkese açık mimari, yol haritası ve platform notları
 ```
 
-Masaüstü, domain, veri katmanı, yerel API ve preview CLI uygulanmıştır. AI köprüsü,
-yayınlama bağlayıcıları, medya motoru, MCP ve kalıcı işçiler planlama aşamasındadır.
-İlk YouTube kimlik doğrulama adaptörü yerel API içindedir.
+Masaüstü, domain, veri katmanı, yerel API, medya motoru ve preview CLI uygulanmıştır.
+YouTube kimlik/yayın ve kalıcı lease kullanan Stüdyo işleri şu an yerel API içinde
+çalışır. AI köprüsü, diğer bağlayıcılar, MCP ve ayrı işçi kuyruğu planlanır.
 
 ## Yol haritası ve katkı
 
-Sonraki hedef, canlı kanal kabulü, yerel medya ve yayın onaylarıyla YouTube için
-uçtan uca ilk paylaşım akışıdır. Manuel editör, AI/MCP, otomatik klip çıkarma, zamanlayıcı
-ve diğer platformlar aşamalı olarak eklenir.
+Sonraki kabul hedefi, uygulanmış insan onaylı YouTube akışının kullanıcıya ait OAuth
+uygulaması ve yetkili canlı kanalla doğrulanmasıdır. Tek klip editörü ilk dilimdir;
+daha kapsamlı kurgu, AI/MCP, otomatik klip çıkarma, zamanlayıcı ve diğer platformlar
+aşamalı olarak eklenir.
 
 - [Yol haritası](docs/ROADMAP.md)
 - [Mimari ve güven sınırları](docs/ARCHITECTURE.md)
@@ -160,3 +184,5 @@ için AtrisHub hesabı veya AtrisAgent kaynak kodu gerekmez.
 [Apache Lisansı 2.0](LICENSE) ile lisanslanmıştır. [NOTICE](NOTICE) dosyasına bak.
 Üçüncü taraf AI araçları, platform API’leri, medya varlıkları ve ileride
 dağıtılabilecek ikili dosyalar kendi lisans ve koşullarına tabidir.
+Yerel doğrulamada kullanılan geçici GPL etkin FFmpeg derlemeleri dağıtım parçası
+değildir; gelecekte paketlemek için derleme/codec lisansları ayrıca incelenmelidir.
