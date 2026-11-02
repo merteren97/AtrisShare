@@ -6,15 +6,16 @@ channel/subject verification, vault storage, refresh/
 disconnect, owned catalog pagination/linking, immutable review, resumable upload,
 processing receipts and reconciliation have controlled-provider coverage, not live
 Google acceptance. Live use needs a user-owned OAuth app, authorized channel and
-explicit human approval. [Setup and current limits](YOUTUBE.md). All other connectors
-remain planned; access products/restrictions can change.
+explicit human approval. [Setup and current limits](YOUTUBE.md). X, LinkedIn and
+TikTok official adapters also have controlled-provider coverage. App provisioning
+and product restrictions still apply; see [social setup](SOCIAL.md).
 
 | Platform | Operations / target | Integration discovery required |
 | --- | --- | --- |
 | YouTube | Implemented verification, owned metadata/linking and supervised video upload/reconciliation; short-form classification unverified | Phase 9 live acceptance, OAuth/API review, quotas, privacy restrictions and Shorts eligibility |
-| X | Text composition and supported media posts | OAuth/user context, write/media product access, pricing tier, character/media constraints and rate limits |
-| TikTok | Short-video preparation and permitted publishing flow | Content Posting API eligibility/review, consent UX, account restrictions, upload/processing states and visibility options |
-| LinkedIn | Member and, where permitted, organization text/video posts | OAuth products/scopes, organization roles, media upload flow, API versioning and app review |
+| X | Implemented native PKCE, identity, weighted text/video, receipts/readback | Approved exact loopback redirect/public client, write/media scopes and paid API access |
+| TikTok | Implemented Desktop PKCE and video Direct Post, fresh creator/consent review | Developer-owned app secret, public creator-app eligibility/product/audit; unaudited private/SELF_ONLY restrictions. No text-only post |
+| LinkedIn | Implemented member/authorized organization text-video, fresh ACL checks/receipts | LinkedIn-enabled native PKCE, products/scopes/roles, REST 202610. Member readback and remote revoke unavailable |
 
 All implemented connectors join the [Phase 9 acceptance matrix](ACCEPTANCE.md)
 after Phase 8 hardening, packaging and feature completion. Local regressions and

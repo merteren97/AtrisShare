@@ -54,7 +54,7 @@ async function fixture(t, options = {}) {
     }
     if (address.pathname === "/youtube/v3/channels") {
       assert.equal(address.searchParams.get("mine"), "true");
-      return json({ items: [{ id: control.channel, snippet: { title: "Verified test channel" } }] });
+      return json({ items: control.channels ?? [{ id: control.channel, snippet: { title: "Verified test channel" } }] });
     }
     if (address.pathname === "/revoke") {
       if (control.revokeGate) await control.revokeGate.promise;
@@ -96,7 +96,7 @@ async function fixture(t, options = {}) {
 
 test("official desktop PKCE flow verifies subject/channel and persists only vault references", async t => {
   const f = await fixture(t);
-  const demo = await (await f.call("/api/accounts", { displayName: "Existing demo", platform: "youtube" })).json();
+  const local = await (await f.call("/api/accounts", { displayName: "Local media", platform: "local" })).json();
   const session = await f.start();
   assert.equal(session.state, "awaiting-browser");
   const url = f.authUrl;
@@ -110,7 +110,7 @@ test("official desktop PKCE flow verifies subject/channel and persists only vaul
   assert.equal(exchange.get("grant_type"), "authorization_code");
   assert.equal(createHash("sha256").update(exchange.get("code_verifier")).digest("base64url"), url.searchParams.get("code_challenge"));
   const state = await (await f.call("/api/workspace")).json();
-  assert.equal(state.accounts.find(account => account.id === demo.id).status, "demo");
+  assert.equal(state.accounts.find(account => account.id === local.id).status, "local");
   const account = state.accounts.find(account => account.status === "connected");
   assert.equal(account.destinationId, channelA);
   assert.equal(account.connection.providerSubjectId, "google-subject-a");
@@ -143,6 +143,60 @@ test("callback rejects hostile origins, mismatched/duplicate state, replay and a
   assert.equal((await f.call("/api/youtube/sessions", { expectedChannelId: channelB, access_token: "forged" })).status, 400);
   assert.equal((await fetch(`${f.api.origin}/api/youtube`)).status, 401);
   assert.equal((await f.call("/api/vault")).status, 404);
+});
+
+test("channel discovery requires explicit selection and never exposes or saves pending credentials", async t => {
+  const f = await fixture(t);
+  const session = await (await f.call("/api/youtube/sessions", {})).json();
+  await f.callback();
+  const discovered = await (await f.call(`/api/youtube/sessions/${session.id}`)).json();
+  assert.equal(discovered.state, "select-channel");
+  assert.deepEqual(discovered.channels, [{ id: channelA, title: "Verified test channel" }]);
+  assert.ok(!JSON.stringify(discovered).includes("synthetic-access-token"));
+  assert.equal(f.secrets.size, 0);
+  assert.deepEqual((await (await f.call("/api/workspace")).json()).accounts, []);
+  assert.equal((await f.call(`/api/youtube/sessions/${session.id}/select`, { channelId: channelB })).status, 409);
+  assert.equal((await f.call("/api/youtube/config", client)).status, 409);
+  const selected = await (await f.call(`/api/youtube/sessions/${session.id}/select`, { channelId: channelA })).json();
+  assert.equal(selected.state, "connected");
+  assert.equal(selected.expectedChannelId, channelA);
+  assert.equal(selected.channels, undefined);
+  assert.equal(f.secrets.size, 1);
+  assert.equal((await f.call(`/api/youtube/sessions/${session.id}/select`, { channelId: channelA })).status, 409);
+  assert.equal((await f.call("/api/youtube/sessions", { accountId: selected.accountId })).status, 400);
+});
+
+test("cancelled and expired channel discovery cannot save a connection", async t => {
+  for (const expire of [false, true]) await t.test(expire ? "expiry" : "cancel", async t => {
+    const f = await fixture(t);
+    const session = await (await f.call("/api/youtube/sessions", {})).json();
+    await f.callback();
+    if (expire) f.advance(11 * 60_000);
+    else await f.call(`/api/youtube/sessions/${session.id}/cancel`, {});
+    assert.equal((await f.call(`/api/youtube/sessions/${session.id}/select`, { channelId: channelA })).status, 409);
+    assert.equal(f.secrets.size, 0);
+    assert.deepEqual((await (await f.call("/api/workspace")).json()).accounts, []);
+  });
+});
+
+test("discovery handles missing and multiple channels without inferring a destination", async t => {
+  await t.test("no channel", async t => {
+    const f = await fixture(t, { control: { channels: [] } });
+    const session = await (await f.call("/api/youtube/sessions", {})).json();
+    await f.callback();
+    const result = await (await f.call(`/api/youtube/sessions/${session.id}`)).json();
+    assert.equal(result.state, "failed"); assert.equal(result.error, "youtube_no_channel"); assert.equal(f.secrets.size, 0);
+  });
+  await t.test("multiple channels", async t => {
+    const f = await fixture(t, { control: { channels: [{ id: channelA, snippet: { title: "A" } }, { id: channelB, snippet: { title: "B" } }] } });
+    const session = await (await f.call("/api/youtube/sessions", {})).json(); await f.callback();
+    const result = await (await f.call(`/api/youtube/sessions/${session.id}`)).json();
+    assert.equal(result.state, "select-channel"); assert.equal(result.channels.length, 2);
+    assert.equal(f.secrets.size, 0);
+    const selected = await (await f.call(`/api/youtube/sessions/${session.id}/select`, { channelId: channelB })).json();
+    assert.equal(selected.state, "connected");
+    assert.equal((await (await f.call("/api/workspace")).json()).accounts[0].destinationId, channelB);
+  });
 });
 
 test("wrong channel, denied scopes/consent, missing refresh and issuer mismatch cannot create accounts", async t => {

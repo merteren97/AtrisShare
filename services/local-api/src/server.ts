@@ -5,7 +5,7 @@ import { createReadStream } from "node:fs";
 import { pipeline } from "node:stream/promises";
 import { z, ZodError } from "zod";
 import {
-  APP_VERSION, contextSchema, createAccountSchema, createMemorySchema, createProjectSchema,
+  APP_VERSION, contextSchema, createLocalAccountSchema, createMemorySchema, createProjectSchema,
   deleteMemorySchema, idSchema, updateMemorySchema, type VaultStatus, type WorkspaceContext
 } from "../../../packages/domain/src/workspace.js";
 import { resolveDataDirectory, WorkspaceError } from "../../../packages/storage/src/config.js";
@@ -22,6 +22,14 @@ import { TranscriptionService, type TranscriptionOptions } from "./transcription
 import { googleDesktopClientSchema } from "./youtube-provider.js";
 import { ClipService, type ClipOptions } from "./clips.js";
 import { clipCorrectionSchema, clipRequestSchema } from "../../../packages/domain/src/clips.js";
+import { SocialService, type SocialOptions } from "./social.js";
+import { socialRoute } from "./social-routes.js";
+import { SocialTextService, type SocialTextOptions } from "./social-text.js";
+import { Scheduler } from "./scheduler.js";
+import { createScheduleSchema, scheduleActionSchema, updateScheduleSchema } from "../../../packages/domain/src/scheduling.js";
+import twitterText from "twitter-text";
+import { MediaTools, mediaToolsSchema } from "./media-tools.js";
+import { TranscriptionEngine } from "../../../packages/media-engine/src/transcription.js";
 
 export interface ApiOptions {
   dataDirectory?: string;
@@ -37,6 +45,8 @@ export interface ApiOptions {
   ai?: AiOptions;
   transcription?: TranscriptionOptions;
   clips?: ClipOptions;
+  social?: Omit<SocialOptions, "mediaPath">;
+  socialText?: SocialTextOptions;
 }
 export const NATIVE_ORIGINS = ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
 const MAX_BODY = 32 * 1024;
@@ -79,10 +89,19 @@ export async function startApi(options: ApiOptions = {}) {
   const store = new WorkspaceStore(join(directory, "atris-share.sqlite"));
   const youtube = new YouTubeService(store, credentialVault, options.youtube);
   await youtube.loadLocalClient();
-  const studio = new StudioService(store, youtube, credentialVault, directory, options.studio);
-  const transcription = new TranscriptionService(store, studio, options.transcription);
+  const mediaTools = new MediaTools(directory);
+  const toolPaths = await mediaTools.load();
+  const studio = new StudioService(store, youtube, credentialVault, directory, { ...options.studio, engine: { ...toolPaths, ...options.studio?.engine } });
+  const transcription = new TranscriptionService(store, studio, options.transcription ?? { engine: new TranscriptionEngine(toolPaths) });
   const ai = new AiService(store, studio, { ...options.ai, transcription });
   const clips = new ClipService(store, studio, transcription, options.clips);
+  const social = new SocialService(store.social, credentialVault, { validateXText: text => twitterText.parseTweet(text).valid,
+    xTextMetrics: text => { const r = twitterText.parseTweet(text); return { weightedLength: r.weightedLength, valid: r.valid }; }, ...options.social, mediaPath: id => studio.engine.path(id) });
+  const socialText = new SocialTextService(store, options.socialText);
+  const scheduler = new Scheduler(store, (kind, id, context, destinationId) => {
+    if (kind === "youtube") studio.reconcile(id, context);
+    else social.reconcile(id, { accountId: context.accountId, projectId: context.projectId!, destinationId });
+  });
   let origin = "";
   let closePromise: Promise<void> | undefined;
   const send = (response: ServerResponse, status: number, payload: unknown) => {
@@ -131,12 +150,26 @@ export async function startApi(options: ApiOptions = {}) {
       const received = createHash("sha256").update(request.headers.authorization ?? "").digest();
       if (!timingSafeEqual(received, expected)) throw new WorkspaceError(401, "unauthorized");
       const route = `${request.method} ${url.pathname}`;
+      if (url.pathname.startsWith("/api/social")) {
+        const requestAbort = new AbortController();
+        const abortSocial = () => { if (!response.writableEnded) requestAbort.abort(); };
+        request.once("aborted", abortSocial); response.once("close", abortSocial);
+        try {
+          const result = await socialRoute(social, request.method ?? "", url, () => body(request, 128 * 1024), { text: socialText, signal: requestAbort.signal });
+          if (!result) throw new WorkspaceError(404, "not_found");
+          send(response, result.status, result.body); return;
+        } finally { request.off("aborted", abortSocial); response.off("close", abortSocial); }
+      }
       if (route === "GET /api/workspace") {
         const context = store.getContext();
         send(response, 200, { accounts: store.listAccounts(), context, projects: context ? store.listProjects(context.accountId) : [],
           vault, dataDirectory: directory, version: APP_VERSION });
       } else if (route === "POST /api/accounts") {
-        send(response, 201, store.createAccount(createAccountSchema.parse(await body(request))));
+        send(response, 201, store.createAccount(createLocalAccountSchema.parse(await body(request))));
+      } else if (route === "GET /api/settings/media-tools") {
+        send(response, 200, { ...mediaTools.view(), tools: await studio.engine.status() });
+      } else if (route === "POST /api/settings/media-tools") {
+        send(response, 200, { ...await mediaTools.save(mediaToolsSchema.parse(await body(request))), tools: await studio.engine.status() });
       } else if (route === "GET /api/youtube") {
         send(response, 200, youtube.setup());
       } else if (route === "POST /api/youtube/config") {
@@ -145,6 +178,9 @@ export async function startApi(options: ApiOptions = {}) {
         send(response, 201, await youtube.start(startYouTubeSchema.parse(await body(request)), origin));
       } else if (request.method === "GET" && /^\/api\/youtube\/sessions\/[^/]+$/.test(url.pathname)) {
         send(response, 200, youtube.status(idSchema.parse(url.pathname.split("/").at(-1))));
+      } else if (request.method === "POST" && /^\/api\/youtube\/sessions\/[^/]+\/select$/.test(url.pathname)) {
+        const input = z.object({ channelId: z.string() }).strict().parse(await body(request));
+        send(response, 200, await youtube.select(idSchema.parse(url.pathname.split("/").at(-2)), input.channelId));
       } else if (request.method === "POST" && /^\/api\/youtube\/sessions\/[^/]+\/(cancel|open)$/.test(url.pathname)) {
         const id = idSchema.parse(url.pathname.split("/").at(-2));
         send(response, 200, url.pathname.endsWith("/cancel") ? youtube.cancel(id) : await youtube.reopen(id));
@@ -254,6 +290,22 @@ export async function startApi(options: ApiOptions = {}) {
           const input = z.object({ context: studioContextSchema }).strict().parse(await body(request));
           send(response, 202, url.pathname.endsWith("/cancel") ? studio.cancel(id, input.context) : studio.reconcile(id, input.context));
         }
+      } else if (route === "GET /api/queue") {
+        store.schedules.tick(); send(response, 200, { ...store.schedules.snapshot(queryContext(url)), ...scheduler.status() });
+      } else if (route === "GET /api/queue/notifications") {
+        const after = url.searchParams.has("afterId") ? z.object({ id: idSchema, dueAt: z.string().datetime() }).parse({ id: url.searchParams.get("afterId"), dueAt: url.searchParams.get("afterDueAt") }) : undefined;
+        store.schedules.tick(); send(response, 200, { ...store.schedules.notificationPage(after), ...scheduler.status() });
+      } else if (route === "POST /api/schedules") {
+        send(response, 201, store.schedules.create(createScheduleSchema.parse(await body(request))));
+      } else if (request.method === "PUT" && /^\/api\/schedules\/[^/]+$/.test(url.pathname)) {
+        const input = updateScheduleSchema.parse(await body(request));
+        send(response, 200, store.schedules.change(idSchema.parse(url.pathname.split("/")[3]), input.context, input.expectedRevision, "reschedule", input.rule));
+      } else if (request.method === "POST" && /^\/api\/schedules\/[^/]+\/(pause|resume|cancel)$/.test(url.pathname)) {
+        const input = scheduleActionSchema.parse(await body(request));
+        send(response, 200, store.schedules.change(idSchema.parse(url.pathname.split("/")[3]), input.context, input.expectedRevision, url.pathname.split("/")[4] as "pause" | "resume" | "cancel"));
+      } else if (request.method === "POST" && /^\/api\/queue\/[^/]+\/skip$/.test(url.pathname)) {
+        const input = z.object({ context: studioContextSchema }).strict().parse(await body(request));
+        send(response, 200, store.schedules.skip(idSchema.parse(url.pathname.split("/")[3]), input.context));
       } else if (route === "PUT /api/context") {
         send(response, 200, store.setContext(contextSchema.parse(await body(request))));
       } else if (route === "GET /api/projects") {
@@ -287,7 +339,8 @@ export async function startApi(options: ApiOptions = {}) {
    server.requestTimeout = 30 * 60_000; // bounded 2 GiB media streaming; JSON keeps its small size limit.
   server.headersTimeout = 10_000;
   function close(): Promise<void> {
-    closePromise ??= clips.close().then(() => Promise.all([ai.close(), transcription.close(), studio.close(), youtube.close()])).then(() => new Promise<void>((resolve, reject) => {
+    scheduler.close();
+    closePromise ??= clips.close().then(() => Promise.all([ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()])).then(() => new Promise<void>((resolve, reject) => {
       server.close(error => { store.close(); if (error) reject(error); else resolve(); });
       server.closeIdleConnections();
     }));
@@ -303,6 +356,6 @@ export async function startApi(options: ApiOptions = {}) {
         resolve();
       });
     });
-  } catch (error) { store.close(); throw error; }
+  } catch (error) { scheduler.close(); await Promise.all([clips.close(), ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()]); store.close(); throw error; }
   return { origin, token, close, server };
 }

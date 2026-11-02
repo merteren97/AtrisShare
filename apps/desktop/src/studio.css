@@ -15,6 +15,30 @@ main:has(> .studio) { padding: 22px 24px 24px; }
 .studio-tabs > button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
 .studio-tabs > button:hover { color: var(--text); }
 .studio-workbench { display: grid; grid-template-columns: minmax(155px, .65fr) minmax(240px, 1.6fr) minmax(300px, 1.15fr); border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); height: max(430px, calc(100dvh - 335px)); max-height: 900px; }
+.studio-modebar { display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-bottom: 16px; }
+.studio-modebar .studio-segmented { position: static; margin: 0; padding: 4px; background: var(--sidebar); }
+.studio-modebar .studio-segmented button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 9px 14px; font-size: 12px; }
+.studio-modebar .studio-segmented button[aria-selected="true"] { color: var(--accent); background: var(--accent-soft); }
+.studio-mode-help { color: var(--faint); font-size: 11px; }
+.studio-workbench.is-editing { grid-template-columns: 190px minmax(0, 1fr); height: auto; max-height: none; }
+.is-editing .studio-canvas { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; }
+.is-editing .studio-preview { aspect-ratio: auto; height: clamp(140px, 20dvh, 200px); }
+.is-editing .studio-preview video { max-height: 200px; }
+.is-editing .studio-preview-caption { margin-top: 10px; align-items: center; }
+.is-editing .studio-preview-caption p { margin-top: 3px; }
+.is-editing .studio-file-details { margin-top: 8px; }
+.is-editing .studio-file-details summary { font-size: 10px; }
+.is-editing .studio-inspector { grid-column: 1 / -1; border-left: 0; border-top: 1px solid var(--line); overflow: visible; }
+.is-editing .studio-inspector-form { padding: 20px 24px; max-width: none; }
+.is-editing .studio-edit-columns { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 28px; align-items: start; }
+.is-editing .studio-global-settings { border-block: 0; border-left: 1px solid var(--line); padding: 0 0 0 28px; margin: 0; }
+.is-editing .studio-editor-fields legend { font-size: 14px; padding-top: 0; }
+.is-editing .studio-kept-track { height: 50px; }
+.is-editing .studio-range-list { max-height: 180px; margin-top: 8px; }
+.is-editing .studio-range-list strong { font-size: 12px; }
+.is-editing .studio-range-list small { font-size: 10px; }
+.is-editing .studio-full-width { width: auto; min-width: 190px; }
+.is-editing .studio-preview-empty { min-height: 320px; }
 .studio-library, .studio-canvas, .studio-inspector { min-height: 0; overflow: auto; scrollbar-width: thin; }
 .studio-library { border-right: 1px solid var(--line); min-width: 0; background: var(--sidebar); }
 .studio-pane-heading { display: flex; justify-content: space-between; align-items: center; padding: 18px 14px; gap: 9px; }
@@ -43,6 +67,9 @@ main:has(> .studio) { padding: 22px 24px 24px; }
 .studio-file-details { font-size: 10px; color: var(--faint); margin-top: 16px; }
 .studio-file-details summary { cursor: pointer; width: fit-content; }
 .studio-file-details code { display: block; overflow-wrap: anywhere; margin-top: 9px; line-height: 1.7; }
+.studio-render-details { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
+.studio-render-details > summary { color: var(--muted); font-size: 11px; cursor: pointer; }
+.studio-render-details > summary .count { margin-left: 6px; }
 .studio-preview-empty { min-height: 460px; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 25px 10px; }
 .studio-empty-frame { display: grid; place-items: center; width: 82px; height: 65px; border: 1px solid var(--line); border-radius: 9px; color: var(--muted); margin-bottom: 25px; background: var(--surface); }
 .studio-preview-empty h2 { font-size: 16px; }
@@ -73,6 +100,8 @@ main:has(> .studio) { padding: 22px 24px 24px; }
 .studio-notice, .studio-saved { display: flex; align-items: center; gap: 8px; color: var(--accent); font-size: 11px; line-height: 1.7; margin-bottom: 15px; }
 .studio-callout { background: var(--warning-soft); color: var(--warning); padding: 13px; border-radius: 6px; line-height: 1.8; font-size: 11px; margin-bottom: 18px; overflow-wrap: anywhere; }
 .studio-callout p { margin-top: 6px; }
+.studio-tools-callout { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; }
+.studio-tools-callout > div { flex: 1; min-width: 200px; }
 .studio-inline-error { color: var(--danger); font-size: 11px; line-height: 1.8; margin: 10px 0; overflow-wrap: anywhere; }
 .studio-editor-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
 .studio-editor-fields legend { font-size: 12px; font-weight: 550; padding: 5px 0 17px; }
@@ -186,12 +215,23 @@ main:has(> .studio) { padding: 22px 24px 24px; }
   .studio-preview-empty { min-height: 350px; }
   .studio-files { max-height: 450px; }
   .studio-inspector-empty { padding-top: 0; }
+  .studio-mode-help { display: none; }
+  .studio-workbench.is-editing { grid-template-columns: 150px minmax(0, 1fr); }
+  .is-editing .studio-inspector-form { padding: 20px; }
+  .is-editing .studio-edit-columns { gap: 20px; }
+  .is-editing .studio-global-settings { padding-left: 20px; }
 }
 @container (max-width: 560px) {
   .studio-heading { align-items: flex-start; gap: 15px; }
   .studio-heading h1 { font-size: 23px; }
   .studio-heading-actions { flex-direction: column-reverse; align-items: flex-end; gap: 10px; }
   .studio-workbench { grid-template-columns: minmax(0, 1fr); }
+  .studio-workbench.is-editing { grid-template-columns: minmax(0, 1fr); }
+  .studio-modebar .studio-segmented { width: 100%; flex-wrap: wrap; }
+  .studio-modebar .studio-segmented button { padding: 8px; font-size: 11px; }
+  .is-editing .studio-edit-columns { grid-template-columns: minmax(0, 1fr); }
+  .is-editing .studio-global-settings { border-left: 0; border-top: 1px solid var(--line); padding: 18px 0 0; }
+  .is-editing .studio-preview { aspect-ratio: 16 / 9; }
   .studio-library { border-right: 0; border-bottom: 1px solid var(--line); }
   .studio-pane-heading { padding: 13px 16px 8px; }
   .studio-files { display: flex; flex-wrap: wrap; gap: 4px; max-height: 164px; padding: 0 9px 9px; }

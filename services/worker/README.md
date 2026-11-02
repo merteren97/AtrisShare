@@ -3,7 +3,8 @@
 This directory reserves the standalone queue/scheduling service. Current Studio
 render and supervised YouTube tasks run in `services/local-api/src/studio.ts`, with
 `packages/media-engine` and durable SQLite ownership/progress in `StudioStore`.
-There is no standalone worker executable, recurring scheduler or tray service yet.
+There is no standalone worker executable. Recurring local scheduling runs in
+`local-api/src/scheduler.ts`; native tray is explicit opt-in. See [scheduling](../../docs/SCHEDULING.md).
 
 ## Implemented local task ownership
 
@@ -53,11 +54,10 @@ No secrets were provided and no live OAuth/inference tests were run. Release
 authorization requires Phase 9 completion and a separate explicit request.
 See [YouTube](../../docs/YOUTUBE.md).
 
-## Future queue and schedules
+## Local queue and schedules
 
-Keep future queue orchestration separate from connector calls and media processing.
-Local transcription is already implemented; scheduled occurrences are Phase 6
-feature work, with consolidated live/end-to-end acceptance at Phase 9.
+Queue orchestration is separate from connector calls/media processing. Phase 6
+occurrences are implemented; consolidated live/end-to-end acceptance is Phase 9.
 
 At a scheduled occurrence, create an approval request and notify the user.
 Without approval the job waits, then expires according to explicit policy.

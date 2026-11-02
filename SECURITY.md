@@ -4,8 +4,11 @@ Only the latest preview source is in scope during early development. The
 local workspace exposes an authenticated loopback-only API and an internal
 Windows DPAPI vault. The YouTube Desktop OAuth/PKCE connection slice adds a
 single-use state-bound loopback callback, vault-backed credentials, identity/channel
-verification, refresh and disconnect. Authorized live-channel acceptance is pending;
-publishing is not implemented. Demo accounts do not store provider credentials.
+verification, refresh and disconnect. Supervised publishing, IANA local scheduling,
+scoped AI/MCP and official X/LinkedIn/TikTok adapters are implemented. Every actual
+publication requires per-payload/per-occurrence human approval; memory/model output
+is never authority. Live acceptance remains Phase 9. Demo accounts have no provider
+credentials. See [data](docs/DATA.md) and [packaging](docs/PACKAGING.md).
 
 For a vulnerability, use the repository's **Security → Advisories → Report a
 vulnerability** private reporting flow when it is enabled. If that option is

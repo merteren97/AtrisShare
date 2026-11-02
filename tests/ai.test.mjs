@@ -319,7 +319,7 @@ test("frozen v3 to v4 migration preserves artifacts, timeline, publications, ren
   for (let attempt = 0; attempt < 2; attempt++) {
     const store = new WorkspaceStore(path);
     try {
-      assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 6);
+      assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 10);
       assert.equal(store.db.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
       assert.deepEqual(store.db.prepare("PRAGMA foreign_key_check").all(), []);
       assert.deepEqual(tables.map(table => store.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), before);

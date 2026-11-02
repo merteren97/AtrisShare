@@ -1,12 +1,15 @@
-# Desktop workspace — implemented in Phase 1
+# Desktop — video editing and publishing workspace
 
 React + TypeScript + Vite + Tauri 2 shell, following the local-first Atris
 application architecture. Run `npm run dev` or `npm run tauri:dev` from the root.
 
-Implemented: demo account/destination switcher, project creation/selection,
-account/project-scoped memory CRUD/search/filter, audit and appearance/storage
-settings, Turkish/English UI and dark/light themes. Video/AI/composer/queue and
-approval surfaces are future phases.
+Implemented: direct Video editor navigation, local projects without social login,
+non-destructive trim/split/crop/caption editing and exports, clip discovery, optional
+AI proposals, composer/queue and human approval. Accounts centralizes official
+YouTube/X/LinkedIn/TikTok setup and connections. Memory, audit, tool paths and desktop
+preferences persist locally. Turkish/English UI and dark/light themes are available.
+Windows GUI builds hide the console in debug and release; owned helpers are hidden too.
+Provider configuration and actual authorization are required for live account operations.
 
 The desktop is a client of the authenticated local API. It does not own OAuth
 secrets, perform social publishing directly, or grant AI clients approval.

@@ -2,7 +2,7 @@
 
 Phase 9 consolidates **live AI/YouTube and all-feature end-to-end testing for Phases
 0–8**, after Phase 8 hardening, packaging and feature completion. Features through
-Phase 5 are implemented within their defined scope; Phase 3's limited editor and
+Phase 8 are implemented within their defined preview scope; Phase 3's limited editor and
 Phase 4's core implementation are complete. Deferred live acceptance is not missing
 feature implementation. Additional CLI adapters are future extensions; the first
 real OpenCode adapter is implemented.
@@ -32,13 +32,13 @@ do not record credentials, grants, raw provider bodies or private speech in evid
 | [ ] | 4 — transcript and memory consent | Speech stays local by default. Explicit `includeTranscript` checkbox adds only the bounded transcript context (≤16,000 text characters / 150 segments, language/duration/hash/`truncated` metadata). Memory has a separate opt-in. Check consent reset/stale scope, source-byte changes, and that no media/frame/audio bytes are sent. |
 | [ ] | 4 — external MCP | Actual external stdio SDK client and UI-issued grant/command. Validate handshake/tools, account/project/destination/artifact isolation, bad/unknown arguments, scope injection, expiry/revoke/restart and bounded errors. `media_transcribe`/`transcript_status`/`transcript_cancel` return metadata with empty segments; cancel is confined to grant-tracked jobs. `transcript_read` is absent/forbidden without opt-in; with opt-in, actual-byte hash check, integer `offset`/`limit` pagination (max 100) and `nextOffset`. No unconsented speech, media download, approve or publish authority. |
 | [ ] | 5 — AI clips | Real selected-model candidate ranking/rationale, local scene/silence/transcript timestamps and partial-speech flags; duration/count bounds, sampling disclosure, history/account isolation and model failure/cancel. Boundary/static crop/timed-caption correction and fit errors, sequential multi-export/partial failure/retry, playable A/V output and immutable hashes. Source/transcript/timeline stale conflicts, restart/lease cancellation and private draft → separate exact-payload human approval. No face-tracking/visual-model claim. |
-| [ ] | 6 — scheduler, when implemented | One-off/daily/weekly occurrences, time zones/DST, notification/review inbox, per-occurrence human approval, sleep/restart/offline/missed runs, expiry/cancellation and receipt reconciliation; no silent catch-up or duplicate dispatch. |
-| [ ] | 7 — additional platforms, when implemented | Real authorized X/LinkedIn/TikTok accounts and official supported capabilities; text/video constraints, account/destination isolation, approvals, revoke/auth/quota failures, receipts and per-destination cross-post partial failure. Record unsupported/restricted capabilities accurately. |
+| [ ] | 6 — scheduler | IANA one-off/daily/weekly times, DST gap/first overlap, queue, opt-in tray/default Quit, denied reminders/inbox fallback, timing/hash-bound human review, 24h expiry/10m dispatch, sleep/restart/offline/missed ask/skip/collapsed backlog, generation fences including MEDIA_READY reapproval, concurrent workers and receipt reconciliation. No silent catch-up. |
+| [ ] | 7 — social/text | Authorized X/LinkedIn/TikTok apps/accounts; native OAuth/refresh lease, fresh identity/org roles, weighted X text, LinkedIn readback limits, TikTok fresh creator/privacy/interactions/disclosure/music consent for restored/scheduled reviews. Constraints, auth/quota/uncertain receipts, partial crosspost failure and actual-model text proposal/apply/reject/cancel with project-memory opt-in. |
+| [ ] | 8 — memory data | Full scoped JSON export despite filters, Unicode/provenance/revisions, empty scope, account-switch cancellation and URL cleanup; scoped CAS deletion survives restart, retention/logical-delete limits and no credential/path leakage. |
 | [ ] | 8 — native UX/accessibility | Actual transcription/setup/editor/AI/review views; TR/EN, dark/light themes, keyboard/focus/dialogs, loading/empty/error/retry/cancel states, resizing and native window controls. Verify process cleanup on normal close and native-owner termination; no orphan Node/FFmpeg/FFprobe/whisper/CLI processes. |
 | [ ] | 8 — packaging and clean install | Intended OS/support matrix, clean-machine install/start/upgrade/uninstall and persisted-data migration, pinned runtime/MCP paths, external tool/model setup, fail-closed vault availability, dependency/codec/model licenses and complete bundled notices. Signing/updater claims only if delivered and verified. |
 
-Phase 5 is implemented but not finally accepted; Phases 6–7 rows remain conditional
-on implementation. None are passed today. Phase 8 must
+Phases 5–8 are implemented but not finally accepted. None are passed today. Phase 8 must
 resolve promised feature work before Phase 9; any intentionally excluded capability
 needs an explicit scope decision and accurate support documentation. Extend the
 matrix for any new feature or adapter delivered before final acceptance.

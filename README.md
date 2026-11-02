@@ -21,10 +21,11 @@ short-form clips, write posts, manage multiple accounts and organize publishing.
 
 **Local Workspace Preview `0.1.0-preview.1`:** the React/Tauri desktop, authenticated
 local API, SQLite projects, persistent account/project selection and scoped memory
-are implemented. Create clearly labeled demo targets, organize projects and
+are implemented. Create real local video projects without a social account, organize work and
 create/edit/delete notes with provenance and suggested/confirmed states. Dark/light
 themes and Turkish/English UI are available. Windows DPAPI provides an internal
-credential vault; demo targets do not store social credentials.
+credential vault. The application does not create simulated social accounts;
+legacy local records remain preserved without publication authority.
 
 **Phase 2 features are implemented; live acceptance is deferred to Phase 9:** YouTube Desktop
 OAuth/PKCE, subject/channel verification, vault storage, refresh/disconnect, owned
@@ -50,7 +51,7 @@ covered actual OpenCode 1.19.5 discovery and an external SDK client's determinis
 proposal → preview → human apply → undo flow, **not live LLM inference**. OpenCode is
 the required first real adapter; additional CLI adapters are future extensions.
 Windows has a custom titlebar and kill-on-close runtime ownership; the UI has no
-phase badges. Notifications, scheduling and other social connections remain planned.
+phase badges. Local scheduling, tray/reminders and additional official API adapters are implemented below.
 No signed installer is released.
 
 **Phase 5 clip discovery is implemented:** Studio → Clips offers local timestamped
@@ -63,7 +64,16 @@ scores are editing hints. Real local media/UI checks and controlled AI ranking a
 engineering evidence; live model/Google acceptance remains at Phase 9.
 See [clip workflow and limits](docs/CLIPS.md).
 
-## Planned workflow
+**Phases 6–8:** durable one-off/daily/weekly IANA-zone scheduling creates a fresh
+human review per occurrence, with DST/missed-run/expiry recovery. X/LinkedIn text
+and video, TikTok video, explicit crosspost variants and opt-in scoped AI text
+proposals are implemented behind official app/scopes/role gates. Windows tray/
+reminders, scoped memory JSON export and hash-verified package/license staging are
+available. Live-provider and clean-install acceptance remains Phase 9; packaging
+does not authorize release. See [scheduling](docs/SCHEDULING.md),
+[social setup](docs/SOCIAL.md), [data](docs/DATA.md) and [packaging](docs/PACKAGING.md).
+
+## Workflow
 
 1. Connect one or more accounts and select the exact channel/profile destination.
 2. Import your footage or inspect your authorized channel's video catalog and edit history.
@@ -119,7 +129,8 @@ See [MCP setup](services/mcp-server/README.md).
 ## Platform status
 
 YouTube connection and supervised publishing code are implemented with controlled-provider
-coverage; live connection/publication acceptance is deferred to Phase 9. Other connectors are planned.
+coverage; live connection/publication acceptance is deferred to Phase 9. X, LinkedIn
+and TikTok adapters also have controlled-provider coverage and app-specific prerequisites.
 Actual features depend on the official API,
 account permissions, app review, quotas and available access tiers. A YouTube
 catalog does not by itself provide permission or an API to download source footage.
@@ -152,8 +163,10 @@ prerequisites, and on Windows WebView2 plus Microsoft C++ Build Tools.
 Node 22's built-in SQLite API is marked experimental upstream; no separately
 compiled SQLite addon is needed.
 
-Media inspection/export uses **external FFmpeg and FFprobe**, resolved through
-`ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or `PATH`; no media-tool binary is bundled.
+Media inspection/export uses **external FFmpeg and FFprobe**. Save their installed
+file paths in **Settings → Video tools**, then fully quit and reopen the app.
+Saved paths take precedence over `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or
+`PATH`; empty fields use those fallbacks. No media-tool binary is bundled.
 Export requires H.264 (`libx264`), AAC for audio and `drawtext` for captions.
 Imports accept up to **2 GiB** of self-contained MP4-family (`.mp4`/`.mov`) or WebM
 content. `.mkv` is accepted only when the content is WebM, not general Matroska.
@@ -170,14 +183,19 @@ Progress, durable cancellation and lease-fenced restart interruption are impleme
 interrupted/failed jobs need an explicit new run, with no automatic retry or resume.
 No speech tool/model is bundled or downloaded. See [media engine](packages/media-engine/README.md).
 
-Start by adding a **demo account**, creating a project, then opening **Memory**.
-Select **Account-wide** for account notes or a specific project for project notes;
+Start with **Video editor → Create project**. The local workspace option requires
+no social login. Import footage, trim/split, save edits and export. **Accounts**
+contains YouTube, X, TikTok and LinkedIn setup and connection management.
+Select **All projects** for account notes or a specific project for project notes;
 these scopes are intentionally separate. Selection and notes survive restarts.
 On Windows, **Accounts → YouTube app setup** saves your Desktop OAuth client ID and
 optional secret in the encrypted OS vault, activates immediately and survives restart.
+You can import the Desktop client JSON downloaded from Google Cloud. Continue with
+Google, then explicitly choose and confirm the discovered channel. A channel ID
+is optional for new connections and required for an exact-account reconnection.
 Saved values are never read back to the UI or stored in browser storage. Environment
 configuration is a fallback. Follow [the connection guide](docs/YOUTUBE.md) for Phase 9 acceptance.
-Open **Studio** with a project selected to import media, save edits and export.
+The **Video editor** navigation opens the editing workspace directly.
 
 Data defaults to `%LOCALAPPDATA%\AtrisShare` on Windows, `~/Library/Application
 Support/AtrisShare` on macOS and `$XDG_DATA_HOME/AtrisShare` (or
@@ -198,28 +216,27 @@ apps/
 packages/
   domain/            Contracts and runtime workspace schemas
   ai-bridge/         Isolated one-shot OpenCode adapter
-  connectors/        Planned official social APIs
+   connectors/        Boundary; adapters currently live in local-api
   media-engine/      Managed media, proxies, kept-range export and local transcription
   storage/           SQLite migrations, repositories, DPAPI vault port
 services/
   local-api/         Authenticated loopback application API
   mcp-server/        Official-SDK stdio tools with scoped launch grants
-  worker/            Reserved standalone queue/scheduling service
+   worker/            Reserved standalone boundary; local scheduler runs in local-api
 docs/                Public architecture, roadmap and platform notes
 ```
 
 Desktop, domain, storage, local API, media engine and preview CLI are implemented.
 YouTube authentication/publishing and lease-backed Studio jobs currently run inside
 the local API, alongside AI proposal and transcription orchestration. The OpenCode
-bridge and scoped MCP tools are implemented; other connectors and a standalone
-worker queue remain planned.
+bridge, MCP tools, social adapters and durable local scheduler are implemented.
+A separate always-on/cloud worker is not provided.
 
 ## Roadmap and contributions
 
-Features through Phases 0–5 are implemented within their defined scope, including
-the limited editor, AI/transcription bridge and reviewed clip workflow.
-Scheduling and additional platforms follow in Phases 6–7; Phase 8 covers hardening,
-packaging and feature completion. **Phase 9 is the final live AI/YouTube and
+Features through Phases 0–8 are implemented within their defined preview scope,
+including the limited editor, AI/transcription/clips, local queue, social adapters
+and package hardening. **Phase 9 is the final live providers and
 all-feature end-to-end acceptance gate for Phases 0–8.** Local regressions, builds
 and rendered/native UI checks continue as engineering evidence. Deferred acceptance
 does not mean missing features. No secrets were supplied and no live OAuth or AI

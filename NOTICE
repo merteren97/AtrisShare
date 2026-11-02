@@ -5,7 +5,21 @@ Licensed under the Apache License, Version 2.0.
 
 Atris ecosystem: https://atrishub.com
 
-This repository does not include AtrisAgent source, AI CLI tools, FFmpeg or
-social platform SDKs. Native runtime staging includes pinned Node.js and Zod
-with their license texts. Frontend dependencies retain their own licenses.
-Preserve applicable attribution and notices when adapting or bundling components.
+AtrisShare does not bundle AtrisAgent source, AI CLI executables, FFmpeg,
+FFprobe, whisper.cpp executables or speech models. Those remain external tools
+and assets with their own licenses and terms.
+
+Native staging includes pinned Node.js, bundled local API and official-SDK MCP
+server, and the application LICENSE and NOTICE. Generated runtime resources
+contain the Node license inventory and full license/notice texts collected for
+the API/MCP bundles, installed frontend dependency closure and locked,
+target-filtered Cargo dependency graph (including build dependencies).
+dependency-inventory.json records coverage, text hashes, source provenance and
+limitations; manifest.json records the exact staged resource hashes. These are
+inventory checks, not a declaration that all distribution obligations are met.
+
+Unmodified Cargo source archives are linked in RUST-THIRD-PARTY-NOTICES.txt,
+including source for MPL-covered components. Preserve their notices and source
+availability when redistributing. System libraries, WebView2, installer tooling
+and external tools/models require their own distribution review. See
+docs/PACKAGING.md for the unsigned/manual-update preview policy and final gate.

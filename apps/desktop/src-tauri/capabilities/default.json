@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Local desktop window; no shell, filesystem or remote IPC permissions.",
+  "description": "Main local desktop window. Tray preferences and deduplicated notifications use main-window-only Rust commands; no general notification plugin, filesystem, shell or remote IPC permissions.",
   "windows": ["main"],
   "permissions": [
     "core:default",

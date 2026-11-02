@@ -3,8 +3,10 @@
 ## What works
 
 - React/Vite UI in browser development and a Tauri 2 native shell.
-- Explicit demo target identities for YouTube, X, TikTok and LinkedIn. These are
-  local records, not connected social accounts, OAuth sessions or publishable targets.
+- Real local video workspaces (`platform: "local"`, `status: "local"`) without social login.
+  Legacy demo records remain preserved, but the desktop and HTTP API cannot create new ones.
+- Direct Video editor navigation, a full-width manual timeline and centralized Accounts
+  connections for YouTube, X, TikTok and LinkedIn.
 - Project creation/opening, persistent account/project selection, separate
   account-wide and project memory scopes.
 - Memory creation, inspection, editing and deletion; categories, source/time,
@@ -80,7 +82,11 @@ license texts; Node/Zod licenses and linked legal comments are included. Package
 MCP launch does not require an external Node installation.
 
 Media inspection/export requires separately installed FFmpeg and FFprobe, selected
-with `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or found on `PATH`. Export uses
+in **Settings → Video tools** (`media-tools.json` in the workspace data directory).
+Saved paths activate on the next full restart and override `ATRIS_SHARE_FFMPEG` /
+`ATRIS_SHARE_FFPROBE` or `PATH`; empty paths restore those fallbacks. Explicit paths
+must point to the named local executables and are checked with `-version` before saving.
+They also configure transcription's FFmpeg on restart. Export uses
 H.264 (`libx264`), AAC for audio and `drawtext` for captions. No media binary is
 bundled; temporary GPL-enabled verification builds are not distribution artifacts.
 Missing tools are reported as unavailable. Structurally valid imports can be stored
@@ -119,6 +125,9 @@ metadata, timelines, renders, publications and transcripts survive restart. Mana
 under `media/`; v3 adds Studio tables, v4 adds durable AI runs/cancellation and v5
 adds transcripts with owner leases/cancellation; v6 adds scoped clip analyses,
 candidate corrections and batch/draft provenance while preserving earlier data.
+V7 adds IANA schedules/occurrences, v8 social connections/posts, and v9 durable
+remote-refresh leases. See [scheduling](SCHEDULING.md), [social](SOCIAL.md),
+[memory export/retention](DATA.md) and [package resources](PACKAGING.md).
 AtrisShare proposal/run history remains local; temporary
 CLI transcripts are removed rather than retained or resumed.
 
@@ -128,7 +137,7 @@ for filenames. Secrets cross the PowerShell helper through stdin, not argv, and
 are never written as plaintext. Startup probes protect/unprotect before reporting
 the vault available. A missing/failed/unsupported vault returns unavailable and
 does not fall back to SQLite or browser storage. macOS/Linux vault backends are
-not implemented. Demo workflows never write social credentials. YouTube account
+not implemented. Local workspaces never write social credentials. YouTube account
 credentials and resumable upload session URLs use the vault, while SQLite holds
 references and safe metadata.
 
@@ -189,7 +198,9 @@ Every workspace request uses the desktop session bearer. JSON mutation bodies re
 | Method | Route | Purpose |
 | --- | --- | --- |
 | GET | `/api/workspace` | Accounts, selection, selected account's projects, safe vault status and data path |
-| POST | `/api/accounts` | `{displayName, platform}` creates a demo target |
+| POST | `/api/accounts` | `{displayName, platform: "local"}` creates a real local workspace; social identities require OAuth |
+| GET | `/api/settings/media-tools` | Saved paths, active tool status and restart-needed flag |
+| POST | `/api/settings/media-tools` | `{ffmpegPath, ffprobePath}`; verify local executables and save for next startup |
 | PUT | `/api/context` | `{accountId, projectId}` validates and persists selection |
 | GET | `/api/projects?accountId=…` | List only this account's projects |
 | POST | `/api/projects` | `{accountId, name, description}` |

@@ -22,10 +22,11 @@ ve paylaşımları tek uygulama üzerinden planlamaktır.
 
 **Yerel Çalışma Alanı Ön İzlemesi `0.1.0-preview.1`:** React/Tauri masaüstü,
 oturum doğrulamalı yerel API, SQLite projeler, kalıcı hesap/proje seçimi ve kapsamlı
-hafıza yönetimi uygulanmıştır. Açıkça demo etiketli hedefler ve projeler oluşturabilir,
+hafıza yönetimi uygulanmıştır. Sosyal hesap gerektirmeyen gerçek yerel video projeleri oluşturabilir,
 kaynak bilgisi ile öneri/onaylı durumları tutulan notlar ekleyebilir, düzenleyebilir
 ve silebilirsin. Koyu/açık tema ve Türkçe/İngilizce arayüz vardır. Windows DPAPI
-tabanlı dahili kimlik kasası hazırdır; demo hedefler sosyal token tutmaz.
+tabanlı dahili kimlik kasası hazırdır. Uygulama sahte sosyal hesap oluşturmaz;
+önceki sürümün yerel kayıtları yayın yetkisi verilmeden korunur.
 
 **Aşama 2 özellikleri uygulandı; canlı kabul Aşama 9'a ertelendi:** YouTube Desktop OAuth/PKCE,
 kimlik/kanal doğrulaması, kasa, yenileme/bağlantı iptali, sahip olunan videoların
@@ -52,7 +53,7 @@ insan uygulaması → geri al akışını kapsadı; **canlı LLM çıkarımı ya
 OpenCode gerekli ilk gerçek adaptördür; diğer CLI adaptörleri gelecek genişletmelerdir.
 Windows'ta özel başlık
 çubuğu ve kapanışta runtime sahipliği vardır; UI'da aşama rozetleri yoktur.
-Bildirimler, zamanlayıcı ve diğer sosyal bağlantılar planlanır.
+Yerel zamanlayıcı, tray/bildirim ve diğer resmi API adaptörleri aşağıdaki kapsamda uygulanmıştır.
 İmzalı kurulum paketi yayınlanmadı.
 
 **Aşama 5 klip keşfi uygulandı:** Stüdyo → Klipler, yerel zaman damgalı konuşma/sahne/
@@ -65,7 +66,15 @@ yoktur; puanlar kurgu ipucudur. Gerçek yerel medya/UI ve kontrollü AI çıktı
 mühendislik kanıtıdır; canlı model/Google kabulü Aşama 9'da kalır.
 [Klip akışı ve sınırlar](docs/CLIPS.md).
 
-## Planlanan kullanım akışı
+**Aşama 6–8:** kalıcı tek-seferlik/günlük/haftalık IANA kuyruk her tekrar için yeni
+insan incelemesi üretir; DST, kaçırılmış zaman ve süre sonu korunur. X/LinkedIn metin/
+video, TikTok video, bağımsız çoklu hedefler ve opt-in AI metin önerileri resmi
+uygulama/izin/rol koşullarıyla uygulanmıştır. Windows tray/bildirim, kapsamlı hafıza
+JSON dışa aktarma ve hash doğrulamalı paket/lisans hazırlığı vardır. Canlı sağlayıcı/
+temiz kurulum kabulü Aşama 9'da; paketleme yayın izni değildir. [Zamanlayıcı](docs/SCHEDULING.md),
+[sosyal kurulum](docs/SOCIAL.md), [veri](docs/DATA.md), [paketleme](docs/PACKAGING.md).
+
+## Kullanım akışı
 
 1. Bir veya birden fazla hesabı bağla, işlem yapılacak kanal/profili açıkça seç.
 2. Kaynak videonu içe aktar veya yetkili olduğun kanalın video listesini ve eski düzenlemeleri incele.
@@ -121,7 +130,8 @@ konuşma metni alamaz. Onay veya yayın aracı yoktur.
 ## Platform durumu
 
 YouTube bağlantı ve insan onaylı yayın kodu kontrollü sağlayıcı testleriyle uygulanmıştır;
-canlı bağlantı/yayın kabulü Aşama 9'a ertelenmiştir. Diğer bağlayıcılar planlanır.
+canlı bağlantı/yayın kabulü Aşama 9'a ertelenmiştir. X, LinkedIn ve TikTok adaptörleri
+de kontrollü sağlayıcı kapsamındadır; uygulamaya özel erişim koşulları gerektirir.
 Gerçek özellikler resmi
 API’ye, hesap izinlerine, uygulama incelemesine, kotalara ve erişim paketlerine
 bağlıdır. YouTube video listesine erişmek kaynak videoyu indirme yetkisi veya
@@ -154,8 +164,11 @@ ve paketleme için sabitlenen Node 22 çalışma zamanını kurar.
 Node 22'nin dahili SQLite API'si upstream'de deneysel işaretlidir;
 ayrıca native SQLite eklentisi derlemeye gerek yoktur.
 
-Medya inceleme/dışa aktarma için **harici FFmpeg ve FFprobe** kullanılır:
-`ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` veya `PATH`. İkili medya aracı paketlenmez.
+Medya inceleme/dışa aktarma için **harici FFmpeg ve FFprobe** kullanılır.
+Kurulu araçların dosya yollarını **Ayarlar → Video araçları** bölümünden kaydet;
+uygulamadan tamamen çıkıp yeniden aç. Kayıtlı yollar `ATRIS_SHARE_FFMPEG` /
+`ATRIS_SHARE_FFPROBE` ve `PATH` ayarından önceliklidir; boş alanlar bu yedekleri kullanır.
+İkili medya aracı paketlenmez.
 Dışa aktarma H.264 (`libx264`), ses için AAC, altyazı için `drawtext` gerektirir.
 İçe aktarma sınırı **2 GiB**; desteklenen içerik kendi kendine yeterli MP4 ailesi
 (`.mp4`/`.mov`) veya WebM'dir. `.mkv` yalnızca WebM içeriyorsa kabul edilir; genel
@@ -172,14 +185,19 @@ kalıcı iptal ve lease korumalı yeniden başlatma kesintisi uygulanmıştır; 
 kesilen işler açıkça yeni çalıştırma ister, otomatik tekrar veya resume yoktur.
 Konuşma aracı/modeli paketlenmez veya indirilmez. [Medya motoru](packages/media-engine/README.md).
 
-Önce **demo hesap** ekle, bir proje oluştur ve **Hafıza** bölümünü aç. Hesap notları
-için **Hesap geneli**, proje notları için ilgili projeyi seç; bu kapsamlar bilinçli
+**Video editörü → Proje oluştur** ile başla. Yerel çalışma alanı seçeneği sosyal
+giriş gerektirmez. Videonu içe aktar, kırp/böl, düzenlemeyi kaydet ve dışa aktar.
+YouTube, X, TikTok ve LinkedIn bağlantılarının tamamı **Hesaplar** sayfasındadır.
+Hesap notları için **Tüm projeler**, proje notları için ilgili projeyi seç; bu kapsamlar bilinçli
 olarak ayrı tutulur. Seçim ve notlar yeniden başlatmada korunur.
 Windows'ta **Hesaplar → YouTube uygulama ayarı**, Desktop OAuth istemci kimliğini ve
 isteğe bağlı sırrını şifreli OS kasasına kaydeder; hemen etkinleşir ve yeniden başlatmada
-korunur. Kayıtlı değerler UI'a geri okunmaz, tarayıcı depolamasına yazılmaz. Ortam
+korunur. Google Cloud’dan indirilen Masaüstü istemci JSON dosyasını da içe aktarabilirsin.
+Google girişinden sonra bulunan kanalı seçip doğrula. Yeni bağlantıda kanal kimliği
+isteğe bağlıdır; yeniden bağlantıda mevcut hedef kimliği zorunludur.
+Kayıtlı değerler UI'a geri okunmaz, tarayıcı depolamasına yazılmaz. Ortam
 yapılandırması yedektir. Aşama 9 kabulü için [bağlantı rehberini](docs/YOUTUBE.md) izle.
-Medya içe aktarmak, düzenlemeleri kaydetmek ve dışa aktarmak için proje seçip **Stüdyo**'yu aç.
+**Video editörü** menüsü doğrudan düzenleme çalışma alanını açar.
 
 Veriler Windows'ta `%LOCALAPPDATA%\AtrisShare`, macOS'ta `~/Library/Application
 Support/AtrisShare`, Linux'ta `$XDG_DATA_HOME/AtrisShare` veya
@@ -200,7 +218,7 @@ apps/
 packages/
   domain/            Veri sözleşmeleri ve runtime doğrulama şemaları
   ai-bridge/         İzole, tek seferlik OpenCode adaptörü
-  connectors/        Planlanan resmi sosyal medya API’leri
+   connectors/        Sınır; resmi adaptörler şu an local-api içinde
   media-engine/      Yönetilen medya, proxy, aralık birleştiren çıktı ve yerel transkripsiyon
   storage/           SQLite migration/repository ve DPAPI kasa arayüzü
 services/
@@ -213,15 +231,14 @@ docs/                Herkese açık mimari, yol haritası ve platform notları
 Masaüstü, domain, veri katmanı, yerel API, medya motoru ve preview CLI uygulanmıştır.
 YouTube kimlik/yayın ve kalıcı lease kullanan Stüdyo işleri şu an yerel API içinde
 çalışır; AI teklif ve transkripsiyon orkestrasyonu da yerel API'dedir. OpenCode
-köprüsü ve kapsamlı MCP araçları uygulanmıştır; diğer bağlayıcılar ve ayrı işçi
-kuyruğu planlanır.
+köprüsü, kapsamlı MCP, sosyal adaptörler ve kalıcı yerel zamanlayıcı uygulanmıştır.
+Ayrı sürekli çalışan/cloud worker sunulmaz.
 
 ## Yol haritası ve katkı
 
-Aşama 0–5 özellikleri tanımlı kapsamlarında uygulanmıştır: sınırlı editör, AI/transkript
-köprüsü ve incelenebilir klip akışı hazırdır. Zamanlayıcı ve
-diğer platformlar Aşama 6–7'de; sağlamlaştırma, paketleme ve özellik tamamlama Aşama
-8'dedir. **Aşama 9, Aşama 0–8'in canlı AI/YouTube ve tüm özellikleri kapsayan son
+Aşama 0–8 özellikleri tanımlı preview kapsamında uygulanmıştır: sınırlı editör,
+AI/transkript/klip, yerel kuyruk, sosyal adaptör ve paket sağlamlaştırma hazırdır.
+**Aşama 9, Aşama 0–8'in canlı sağlayıcı ve tüm özellikleri kapsayan son
 uçtan uca kabul kapısıdır.** Yerel regresyon, derleme ve render/native UI kontrolleri
 mühendislik kanıtı olarak sürer. Ertelenen kabul, eksik özellik anlamına gelmez.
 Gizli bilgi sağlanmadı; canlı OAuth veya AI çıkarım testi yapılmadı. Yayınlama yetkisi

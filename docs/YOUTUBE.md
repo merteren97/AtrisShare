@@ -56,22 +56,25 @@ before upload acceptance rather than assuming historical restrictions still appl
 ## Connect the exact channel
 
 1. Open **Accounts / Hesaplar**. A working Windows DPAPI vault is required.
-2. Enter your expected **channel ID**: `UC` followed by 22 characters. Find it in
-   YouTube's advanced account/channel settings. A display name or `@handle` is not an ID.
+2. Configure your Google **Desktop app** client, or import its downloaded client JSON.
+   New connections discover the channel after sign-in. The advanced channel-ID field
+   optionally restricts discovery to an exact `UC` ID; reconnection always binds the saved ID.
 3. Select **Continue with Google / Google ile devam et**. Consent opens in the
    system browser, outside the embedded WebView.
 4. Choose the correct Google identity and YouTube channel/Brand Account. Grant:
    - `openid` — obtain the provider subject through the authenticated userinfo API;
    - `https://www.googleapis.com/auth/youtube.readonly` — verify/read the channel;
    - `https://www.googleapis.com/auth/youtube.upload` — supervised resumable uploads.
-5. Return to AtrisShare. The API checks granted scopes, Google subject and the
-   `channels.list(mine=true)` result against your expected ID before storing anything.
+5. Return to AtrisShare. The API verifies granted scopes, Google subject and
+   `channels.list(mine=true)`. Select and confirm a returned channel in the app;
+   no destination is inferred, even when Google returns only one. Pending credentials
+   remain memory-only until confirmation. An explicit advanced ID must match exactly.
 
 The 10-minute, single-use request uses random state and PKCE S256. Its listener
 binds `127.0.0.1` on the runtime's random port; no public callback server, copied
 authorization code, custom redirect scheme or browser scraping is used. Cancelling,
-expiry or restart invalidates the pending request. A demo is never promoted to a
-real account. Verified connections get separate stable IDs; reconnect preserves
+expiry or restart invalidates the pending request, including channel selection.
+Local workspaces are never promoted to connected accounts. Verified connections get separate stable IDs; reconnect preserves
 that real account's projects/memory and refuses a different subject or channel.
 
 **Verify connection** exchanges the refresh token and checks identity/channel again.
@@ -177,8 +180,9 @@ caller-supplied access/refresh tokens or resumable session URLs.
 | --- | --- | --- |
 | GET | `/api/youtube` | Safe configured/available flags, scope names, `configuredSource` and optional bounded `configurationError`; no saved values |
 | POST | `/api/youtube/config` | `{clientId, clientSecret?}`; save encrypted Desktop app setup and activate immediately; returns safe readiness only |
-| POST | `/api/youtube/sessions` | `{expectedChannelId, accountId?}`; account ID is required for reconnect |
-| GET | `/api/youtube/sessions/:id` | Safe pending/result state, expected channel, expiry and bounded error code |
+| POST | `/api/youtube/sessions` | `{expectedChannelId?, accountId?}`; reconnect requires both fields |
+| GET | `/api/youtube/sessions/:id` | Safe pending/result state, optional discovered channels, expected channel, expiry and bounded error code |
+| POST | `/api/youtube/sessions/:id/select` | `{channelId}`; explicitly confirm a discovered channel before persisting the connection |
 | POST | `/api/youtube/sessions/:id/open` | Reopen the internally generated authorization URL |
 | POST | `/api/youtube/sessions/:id/cancel` | Cancel the pending request |
 | POST | `/api/youtube/verify` | `{accountId, destinationId}` |

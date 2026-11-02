@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type FormEvent } from "react";
-import { Check, ChevronDown, ExternalLink, KeyRound, LoaderCircle, ShieldCheck } from "lucide-react";
+import { Check, ChevronDown, ExternalLink, FileJson, KeyRound, LoaderCircle, ShieldCheck } from "lucide-react";
 import type { YouTubeSetup as Setup } from "../../../packages/domain/src/youtube.js";
 import { ApiError, request } from "./api";
 import "./youtube-setup.css";
@@ -15,6 +15,7 @@ export interface YouTubeSetupProps {
 }
 const copy = {
   en: {
+    importJson: "Import Google client JSON", importHelp: "Choose the JSON downloaded for a Desktop app in Google Cloud. Review the imported fields, then save.", invalidJson: "Choose a valid Google Desktop app JSON file under 32 KB. Web application clients are not supported.", cloudChecklist: "Before signing in: enable YouTube Data API v3, create a Desktop app OAuth client, and add your Google account as a test user if the consent screen is in testing mode.",
     title: "YouTube app setup", description: "Use your Google Desktop OAuth app to connect a channel from this device.",
     loading: "Checking app setup…", ready: "Ready to connect", missing: "App configuration needed", unavailable: "Secure storage not ready", checkFailed: "Setup could not be checked",
     local: "Saved securely on this device. Continue with Google below to connect your channel.",
@@ -35,6 +36,7 @@ const copy = {
     closing: "The local runtime is closing. Reopen the app to continue."
   },
   tr: {
+    importJson: "Google istemci JSON dosyasını içe aktar", importHelp: "Google Cloud’dan Masaüstü uygulaması için indirdiğin JSON dosyasını seç. Alanları inceleyip kaydet.", invalidJson: "32 KB altında geçerli bir Google Masaüstü uygulaması JSON dosyası seç. Web uygulaması istemcileri desteklenmez.", cloudChecklist: "Girişten önce: YouTube Data API v3’ü etkinleştir, Masaüstü uygulaması türünde OAuth istemcisi oluştur. İzin ekranı test modundaysa Google hesabını test kullanıcısı olarak ekle.",
     title: "YouTube uygulama ayarı", description: "Bu cihazdan kanal bağlamak için Google Masaüstü OAuth uygulamanızı kullanın.",
     loading: "Uygulama ayarı kontrol ediliyor…", ready: "Bağlantıya hazır", missing: "Uygulama ayarı gerekli", unavailable: "Güvenli depolama hazır değil", checkFailed: "Uygulama ayarı kontrol edilemedi",
     local: "Bu cihazda güvenle kaydedildi. Kanalınızı bağlamak için aşağıdan Google ile devam edin.",
@@ -71,6 +73,19 @@ export function YouTubeSetup({ language, onConfigured, errorText }: YouTubeSetup
   const saveLock = useRef(false);
   const editRef = useRef<HTMLButtonElement | null>(null);
   const clientRef = useRef<HTMLInputElement | null>(null);
+  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [fileError, setFileError] = useState(false);
+  async function importClient(file: File) {
+    setFileError(false); setSaved(false);
+    try {
+      if (file.size > 32768) throw new Error();
+      const value = JSON.parse(await file.text()) as { installed?: { client_id?: unknown; client_secret?: unknown } };
+      const client = value.installed;
+      if (!client || typeof client.client_id !== "string" || client.client_id.length > 256 || !/^[A-Za-z0-9_-]+\.apps\.googleusercontent\.com$/.test(client.client_id) ||
+        client.client_secret !== undefined && (typeof client.client_secret !== "string" || client.client_secret.length > 500 || !/^[A-Za-z0-9_-]+$/.test(client.client_secret))) throw new Error();
+      setClientId(client.client_id); setClientSecret(typeof client.client_secret === "string" ? client.client_secret : ""); setError(null); clientRef.current?.focus();
+    } catch { setFileError(true); }
+  }
 
   async function load() {
     if (saveLock.current) return;
@@ -150,6 +165,9 @@ export function YouTubeSetup({ language, onConfigured, errorText }: YouTubeSetup
       <div className="youtube-app-setup-guide"><p>{text.help}</p>
         <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-button">{text.cloud}<ExternalLink size={13} aria-hidden="true" /></a>
       </div>
+      <p className="section-note">{text.cloudChecklist}</p>
+      <div className="youtube-json-import"><button className="button secondary" type="button" disabled={saving} onClick={() => fileRef.current?.click()}><FileJson size={15} />{text.importJson}</button><p className="field-help">{text.importHelp}</p>
+        <input ref={fileRef} type="file" accept=".json,application/json" hidden aria-label={text.importJson} onChange={e => { const file = e.currentTarget.files?.[0]; e.currentTarget.value = ""; if (file) void importClient(file); }} />{fileError && <p className="form-error" role="alert">{text.invalidJson}</p>}</div>
       <div className="youtube-app-setup-fields">
         <label className="form-field" htmlFor={`${id}-client`}>{text.clientId}
           <input ref={clientRef} id={`${id}-client`} name="youtube-client-id" value={clientId} onChange={event => setClientId(event.target.value)}

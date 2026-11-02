@@ -7,6 +7,7 @@ import type { WorkspaceContext } from "../../domain/src/workspace.js";
 import { idSchema } from "../../domain/src/workspace.js";
 import { WorkspaceError } from "./config.js";
 import type { AiRun } from "../../domain/src/ai.js";
+import { consumeScheduledApproval } from "./schedule-gate.js";
 
 type Row = { data: string; session_ref?: string | null; owner?: string | null; lease_until?: number };
 /** Stable field order, fixed schema version, no client-provided canonical bytes. */
@@ -15,7 +16,7 @@ export function publicationDigest(payload: PublicationPayload): string {
     projectId: payload.projectId, destinationId: payload.destinationId, artifactId: payload.artifactId,
     sha256: payload.sha256, bytes: payload.bytes, mimeType: payload.mimeType, title: payload.title,
     description: payload.description, visibility: payload.visibility, madeForKids: payload.madeForKids,
-    notifySubscribers: payload.notifySubscribers })).digest("hex");
+    notifySubscribers: payload.notifySubscribers, ...(payload.scheduleBinding ? { scheduleBinding: payload.scheduleBinding } : {}) })).digest("hex");
 }
 export class StudioStore {
   constructor(private readonly db: DatabaseSync, private readonly resolve: (scope: WorkspaceContext) => WorkspaceContext,
@@ -192,6 +193,7 @@ export class StudioStore {
       if (this.db.prepare("SELECT id FROM publications WHERE account_id=? AND id<>? AND owner IS NOT NULL AND lease_until>?").get(scope.accountId, id, Date.now())) throw new WorkspaceError(409, "publication_busy");
       if (digest !== null) {
         if (p.state !== "review" || p.digest !== digest || publicationDigest(p.payload) !== digest) throw new WorkspaceError(409, "approval_stale");
+        consumeScheduledApproval(this.db, id, p.payload.scheduleBinding, Date.now());
         p.approvalExpiresAt = new Date(Date.now() + 10 * 60_000).toISOString(); p.state = "uploading";
       } else if (!["uncertain", "processing"].includes(p.state)) throw new WorkspaceError(409, "publication_busy");
       const result = this.db.prepare("UPDATE publications SET owner=?,lease_until=?,data=? WHERE id=? AND (owner IS NULL OR lease_until<=?)")

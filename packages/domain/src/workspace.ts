@@ -2,10 +2,11 @@ import { z } from "zod";
 
 export const APP_VERSION = "0.1.0-preview.1";
 export const idSchema = z.uuid();
-export const platformSchema = z.enum(["youtube", "x", "tiktok", "linkedin"]);
+export const platformSchema = z.enum(["youtube", "x", "tiktok", "linkedin", "local"]);
 const nameSchema = z.string().trim().min(1).max(100);
 export const contextSchema = z.object({ accountId: idSchema, projectId: idSchema.nullable() }).strict();
 export const createAccountSchema = z.object({ displayName: nameSchema, platform: platformSchema }).strict();
+export const createLocalAccountSchema = z.object({ displayName: nameSchema, platform: z.literal("local") }).strict();
 export const createProjectSchema = z.object({
   accountId: idSchema, name: nameSchema, description: z.string().trim().max(500).default("")
 }).strict();
@@ -35,7 +36,7 @@ export interface WorkspaceAccount {
   displayName: string;
   platform: z.infer<typeof platformSchema>;
   destinationId: string;
-  status: "demo" | "connected" | "reauth-required" | "disconnected";
+  status: "demo" | "local" | "connected" | "reauth-required" | "disconnected";
   createdAt: string;
   connection?: { providerSubjectId: string; grantedScopes: string[]; verifiedAt: string };
 }

@@ -153,9 +153,9 @@ test("render failures leave candidates correctable and cancellation awaits the o
 
 test("v5 migration preserves source/transcript/context and adds independent scoped analyses", async t => {
   const f = await fixture(t), before = f.store.transcripts.latest(f.artifact.id, f.context);
-  f.store.db.exec("DROP TABLE clip_analyses; PRAGMA user_version=5");
+  f.store.db.exec("DROP TABLE social_cooldowns; DROP TABLE social_refresh_leases; DROP TABLE social_posts; DROP TABLE social_connections; DROP TABLE social_grants; DROP TABLE social_configs; DROP TABLE schedule_occurrences; DROP TABLE schedules; DROP TABLE clip_analyses; PRAGMA user_version=5");
   const reopened = f.reopen();
-  assert.equal(reopened.db.prepare("PRAGMA user_version").get().user_version, 6);
+  assert.equal(reopened.db.prepare("PRAGMA user_version").get().user_version, 10);
   assert.deepEqual(reopened.transcripts.latest(f.artifact.id, f.context), before);
   assert.deepEqual(reopened.studio.artifact(f.artifact.id, f.context), f.artifact);
   assert.deepEqual(reopened.clips.list(f.artifact.id, f.context), []);
@@ -227,7 +227,7 @@ test("authenticated clip API rejects missing context, injected options and MCP p
   assert.equal((await fetch(`${api.origin}/api/clips`, { headers })).status, 400);
   assert.equal((await fetch(`${api.origin}/api/clips`, { method: "POST", headers, body: JSON.stringify({ options: OPTIONS }) })).status, 400);
   assert.equal((await fetch(`${api.origin}/api/mcp/call`, { method: "POST", headers, body: JSON.stringify({ tool: "clips_publish", arguments: {} }) })).status, 401);
-  const account = await (await fetch(`${api.origin}/api/accounts`, { method: "POST", headers, body: JSON.stringify({ displayName: "Caption bounds", platform: "youtube" }) })).json();
+  const account = await (await fetch(`${api.origin}/api/accounts`, { method: "POST", headers, body: JSON.stringify({ displayName: "Caption bounds", platform: "local" }) })).json();
   const project = await (await fetch(`${api.origin}/api/projects`, { method: "POST", headers, body: JSON.stringify({ accountId: account.id, name: "Large Unicode cues", description: "" }) })).json();
   const correction = { context: { accountId: account.id, projectId: project.id }, expectedRevision: 0, candidateId: randomUUID(), edit: {
     inSeconds: 0, outSeconds: 100, crop: "vertical", gainDb: 0, caption: "", timedCaptions: Array.from({ length: 100 }, (_, i) => ({ start: i, end: i + 1, text: "界".repeat(300) })) } };

@@ -14,6 +14,8 @@ import { channelIdSchema } from "../../domain/src/youtube.js";
 import { StudioStore } from "./studio-store.js";
 import { TranscriptStore } from "./transcript-store.js";
 import { ClipStore } from "./clip-store.js";
+import { SocialStore } from "./social-store.js";
+import { ScheduleStore } from "./schedule-store.js";
 
 type Row = Record<string, string | number | null>;
 const now = () => new Date().toISOString();
@@ -37,6 +39,8 @@ export class WorkspaceStore {
   readonly studio: StudioStore;
   readonly transcripts: TranscriptStore;
   readonly clips: ClipStore;
+  readonly social: SocialStore;
+  readonly schedules: ScheduleStore;
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.db = new DatabaseSync(path);
@@ -44,6 +48,8 @@ export class WorkspaceStore {
     this.studio = new StudioStore(this.db, scope => this.resolveContext(scope), (scope, action, id) => this.audit(scope, action, id));
     this.transcripts = new TranscriptStore(this.db, scope => this.resolveContext(scope), (id, scope) => this.studio.artifact(id, scope));
     this.clips = new ClipStore(this.db, this.studio);
+    this.social = new SocialStore(this.db, scope => this.resolveContext(scope), (scope, action, id) => this.audit(scope, action, id), (id, scope) => this.studio.artifact(id, scope));
+    this.schedules = new ScheduleStore(this.db, scope => this.resolveContext(scope), (scope, action, id) => this.audit(scope, action, id));
   }
   close(): void { this.db.close(); }
   private transaction<T>(fn: () => T): T {
@@ -119,8 +125,8 @@ export class WorkspaceStore {
     return this.transaction(() => {
       const id = randomUUID();
       const account: WorkspaceAccount = { id, displayName: redactSensitiveText(input.displayName), platform: input.platform,
-        destinationId: `demo:${input.platform}:${id}`, status: "demo", createdAt: now() };
-      this.db.prepare("INSERT INTO accounts VALUES(?,?,?,?,?,?)").run(id, account.displayName, account.platform, account.destinationId, "demo", account.createdAt);
+        destinationId: `${input.platform === "local" ? "local" : "demo"}:${input.platform}:${id}`, status: input.platform === "local" ? "local" : "demo", createdAt: now() };
+      this.db.prepare("INSERT INTO accounts VALUES(?,?,?,?,?,?)").run(id, account.displayName, account.platform, account.destinationId, account.status, account.createdAt);
       this.audit({ accountId: id, projectId: null }, "account.created", id);
       if (!this.getContext()) this.saveContext({ accountId: id, projectId: null });
       return account;

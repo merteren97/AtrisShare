@@ -1,7 +1,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 import { startYouTubeSchema, youtubeAccountSchema, YOUTUBE_SCOPES,
-  type StartYouTubeInput, type YouTubeAccountInput, type YouTubeConnection, type YouTubeSession, type YouTubeSetup } from "../../../packages/domain/src/youtube.js";
+  channelIdSchema, type StartYouTubeInput, type YouTubeAccountInput, type YouTubeConnection, type YouTubeSession, type YouTubeSetup } from "../../../packages/domain/src/youtube.js";
 import { WorkspaceError } from "../../../packages/storage/src/config.js";
 import type { WorkspaceStore } from "../../../packages/storage/src/store.js";
 import type { CredentialVault } from "../../../packages/storage/src/vault.js";
@@ -30,6 +30,7 @@ interface Pending {
   accountId: string;
   previous: YouTubeConnection | null;
   abort: AbortController;
+  verified?: { credential: Credential; subject: string; channels: { id: string; title: string }[] };
 }
 export interface YouTubeOptions {
   client?: GoogleDesktopClient | null;
@@ -48,6 +49,7 @@ export class YouTubeService {
   private readonly openBrowser: (url: string) => Promise<boolean>;
   private readonly clock: () => number;
   private pending: Pending | null = null;
+  private sessionTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly operations = new Set<Promise<unknown>>();
   private readonly shutdown = new AbortController();
   private readonly accountLocks = new Set<string>();
@@ -70,7 +72,7 @@ export class YouTubeService {
     this.configLock = true;
   }
   private assertNoActiveSession(): void {
-    if (this.pending && ["awaiting-browser", "verifying"].includes(this.view(this.pending).state)) throw new WorkspaceError(409, "youtube_session_active");
+    if (this.pending && ["awaiting-browser", "verifying", "select-channel"].includes(this.view(this.pending).state)) throw new WorkspaceError(409, "youtube_session_active");
   }
   /** Await during API startup, before listening. Missing local config uses the environment fallback. */
   async loadLocalClient(): Promise<void> {
@@ -128,14 +130,16 @@ export class YouTubeService {
     return this.client;
   }
   private view(pending: Pending): YouTubeSession {
-    if (["awaiting-browser", "verifying"].includes(pending.view.state) && this.clock() >= Date.parse(pending.view.expiresAt)) {
+    if (["awaiting-browser", "verifying", "select-channel"].includes(pending.view.state) && this.clock() >= Date.parse(pending.view.expiresAt)) {
       this.finish(pending, "expired", "youtube_session_expired");
     }
-    return { ...pending.view };
+    return { ...pending.view, ...(pending.view.channels ? { channels: pending.view.channels.map(channel => ({ ...channel })) } : {}) };
   }
   private finish(pending: Pending, state: YouTubeSession["state"], error: string | null = null): void {
+    if (this.pending === pending && this.sessionTimer) { clearTimeout(this.sessionTimer); this.sessionTimer = undefined; }
     pending.view.state = state; pending.view.error = error;
     pending.state = ""; pending.verifier = ""; pending.authorizationUrl = "";
+    delete pending.verified; delete pending.view.channels;
     pending.abort.abort();
   }
   private session(id: string): Pending {
@@ -146,7 +150,7 @@ export class YouTubeService {
   status(id: string): YouTubeSession { return this.view(this.session(id)); }
   cancel(id: string): YouTubeSession {
     const pending = this.session(id);
-    if (["awaiting-browser", "verifying"].includes(pending.view.state)) this.finish(pending, "cancelled");
+    if (["awaiting-browser", "verifying", "select-channel"].includes(pending.view.state)) this.finish(pending, "cancelled");
     return this.view(pending);
   }
   async reopen(id: string): Promise<YouTubeSession> {
@@ -158,9 +162,9 @@ export class YouTubeService {
   async start(value: StartYouTubeInput, origin: string): Promise<YouTubeSession> {
     const client = this.ready();
     const input = startYouTubeSchema.parse(value);
-    const previous = input.accountId ? this.store.getYouTubeConnection(input.accountId, input.expectedChannelId) : null;
+    const previous = input.accountId ? this.store.getYouTubeConnection(input.accountId, input.expectedChannelId!) : null;
     if (!previous && this.store.listAccounts().some(account => account.destinationId === input.expectedChannelId)) throw new WorkspaceError(409, "youtube_already_connected");
-    if (this.pending && ["awaiting-browser", "verifying"].includes(this.view(this.pending).state)) throw new WorkspaceError(409, "youtube_session_active");
+    this.assertNoActiveSession();
     const state = randomBytes(32).toString("base64url");
     const verifier = randomBytes(48).toString("base64url");
     const url = new URL("https://accounts.google.com/o/oauth2/v2/auth");
@@ -168,10 +172,13 @@ export class YouTubeService {
       response_type: "code", scope: YOUTUBE_SCOPES.join(" "), state,
       code_challenge: createHash("sha256").update(verifier).digest("base64url"), code_challenge_method: "S256",
       access_type: "offline", prompt: "consent select_account", ...(previous ? { login_hint: previous.providerSubjectId } : {}) }).toString();
-    const pending: Pending = { view: { id: randomUUID(), expectedChannelId: input.expectedChannelId, state: "awaiting-browser",
+    const pending: Pending = { view: { id: randomUUID(), expectedChannelId: input.expectedChannelId ?? "", state: "awaiting-browser",
       expiresAt: new Date(this.clock() + SESSION_TTL).toISOString(), accountId: previous?.accountId ?? null, error: null, browserOpened: false },
       state, verifier, authorizationUrl: url.href, accountId: input.accountId ?? randomUUID(), previous, abort: new AbortController() };
     this.pending = pending;
+    if (this.sessionTimer) clearTimeout(this.sessionTimer);
+    this.sessionTimer = setTimeout(() => { if (this.pending === pending && ["awaiting-browser", "verifying", "select-channel"].includes(pending.view.state)) this.finish(pending, "expired", "youtube_session_expired"); }, SESSION_TTL);
+    this.sessionTimer.unref();
     return this.reopen(pending.view.id);
   }
   private async tracked<T>(operation: () => Promise<T>): Promise<T> {
@@ -199,6 +206,14 @@ export class YouTubeService {
         const scopes = this.provider.scopes(tokens);
         if (!tokens.refresh_token) throw new WorkspaceError(409, "youtube_refresh_missing");
         const identity = await this.provider.identity(tokens.access_token, pending.abort.signal);
+        if (this.view(pending).state !== "verifying") return;
+        if (!pending.view.expectedChannelId) {
+          if (!identity.channels.length) throw new WorkspaceError(409, "youtube_no_channel");
+          pending.verified = { credential: this.credential(client, tokens, scopes, tokens.refresh_token), subject: identity.subject, channels: identity.channels };
+          pending.view.channels = identity.channels.map(channel => ({ ...channel }));
+          pending.view.state = "select-channel";
+          return;
+        }
         const channel = identity.channels.find(item => item.id === pending.view.expectedChannelId);
         if (!channel) throw new WorkspaceError(409, "youtube_channel_mismatch");
         if (pending.previous && pending.previous.providerSubjectId !== identity.subject) throw new WorkspaceError(409, "youtube_identity_mismatch");
@@ -211,6 +226,28 @@ export class YouTubeService {
       } catch (error) {
         if (pending.view.state === "verifying") this.finish(pending, "failed", error instanceof WorkspaceError ? error.code : "youtube_operation_failed");
       }
+    });
+  }
+  /** Explicit trusted-UI selection; discovery alone never creates or changes an account. */
+  async select(id: string, channelId: string): Promise<YouTubeSession> {
+    channelIdSchema.parse(channelId);
+    return this.tracked(async () => {
+      const pending = this.session(id);
+      if (pending.view.state !== "select-channel" || !pending.verified) throw new WorkspaceError(409, "youtube_session_consumed");
+      const verified = pending.verified;
+      const channel = verified.channels.find(item => item.id === channelId);
+      if (!channel) throw new WorkspaceError(409, "youtube_channel_mismatch");
+      this.ready();
+      pending.view.state = "verifying";
+      pending.view.expectedChannelId = channel.id;
+      try {
+        await this.persist(pending.accountId, channel.id, channel.title, verified.subject, verified.credential, null,
+          () => this.view(pending).state === "verifying" && !this.shutdown.signal.aborted);
+        if (this.view(pending).state === "verifying") { pending.view.accountId = pending.accountId; this.finish(pending, "connected"); }
+      } catch (error) {
+        if (pending.view.state === "verifying") this.finish(pending, "failed", error instanceof WorkspaceError ? error.code : "youtube_operation_failed");
+      }
+      return this.view(pending);
     });
   }
   private credential(client: GoogleDesktopClient, tokens: GoogleTokens, scopes: string[], refreshToken: string): Credential {
@@ -329,7 +366,7 @@ export class YouTubeService {
   }
   async close(): Promise<void> {
     this.shutdown.abort();
-    if (this.pending && ["awaiting-browser", "verifying"].includes(this.pending.view.state)) this.finish(this.pending, "cancelled");
+    if (this.pending && ["awaiting-browser", "verifying", "select-channel"].includes(this.pending.view.state)) this.finish(this.pending, "cancelled");
     await Promise.allSettled([...this.operations]);
   }
 }

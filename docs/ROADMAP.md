@@ -1,7 +1,7 @@
 # Preview roadmap
 
 This is a milestone plan, not a release-date commitment. Features through Phases
-0–5 are implemented within their defined scope. Phase 3's **limited manual-editor
+0–8 are implemented within their defined preview scope. Phase 3's **limited manual-editor
 scope is complete** and Phase 4's **core feature implementation is complete**.
 Live AI/YouTube and all-feature end-to-end acceptance are deliberately deferred to
 the new final **Phase 9**, covering everything delivered in Phases 0–8. Deferred
@@ -15,15 +15,14 @@ live acceptance is not missing feature implementation or a blocker to subsequent
 | 3 — implemented, limited scope | Manual video editor | Full-source/hash-linked compatible proxy ≤1280×720 H.264/AAC with rotation/aspect preserved and source-time playback; trim/split/remove, 1–32 ordered kept ranges within outer bounds, real concat/shared A/V origin/audio-offset silence padding; global crop/static caption/gain, CAS save, undo/redo branching, reopen and export progress/cancel. No multi-track or timed captions |
 | 4 — core features implemented; final acceptance at 9 | AI runtime bridge, local transcription and MCP | Required first real adapter: isolated OpenCode 1.19.5, actual CLI model IDs/user selection, bound persistent proposals, preview/human review and durable cancellation. Local whisper.cpp/FFmpeg transcription with timestamps/language/hash validation and restart leases. Explicit transcript context/read opt-in, separate memory opt-in; official SDK 1.32.2 stdio MCP with scoped 30-minute grants. Additional CLI adapters are future extensions |
 | 5 — features implemented; final acceptance at 9 | AI clip discovery | Source/transcript/revision-bound local speech/scene/silence evidence and optional consented OpenCode ranking; 2–180s, up to 8 explained candidates, boundary/static framing/timed-caption corrections, sequential exports and private human-review YouTube drafts. No visual model/face tracking. [Workflow](CLIPS.md) |
-| 6 | Durable queue and schedules | One-off/daily/weekly local scheduling, approval notification per occurrence, restart/offline/DST recovery, reconciliation |
-| 7 | Additional platforms and text | X/LinkedIn composer, TikTok video flow, multiple destinations/accounts, capability-aware cross-posting |
-| 8 | Hardening, packaging and feature completion | Complete Phases 0–8 features; accessibility, local/native checks, packaging, license inventory, release notes and accurate support matrix; prepare final acceptance inputs |
+| 6 — implemented | Durable queue and schedules | IANA one-off/daily/weekly queue, fresh timing/hash-bound review, DST/missed expiry, CAS/pause/reschedule, tray/reminders and receipt checks; [details](SCHEDULING.md) |
+| 7 — implemented; app provisioning required | Additional platforms and text | Official X/LinkedIn text-video, TikTok video/consent, scoped native OAuth and independent crosspost variants/receipts, actual-model AI text proposals; [access gates](SOCIAL.md) |
+| 8 — implemented; final install acceptance at 9 | Hardening and package staging | Memory export/retention, responsive/keyboard recovery, fresh SHA-256 resources/full notices, unsigned Windows NSIS preparation and non-publishing native CI; [packaging](PACKAGING.md) |
 | 9 — final acceptance | Live providers and all-feature end-to-end validation | Execute the [acceptance matrix](ACCEPTANCE.md) for Phases 0–8: real OAuth/AI, human-approved private publication, recovery, external MCP, native UI/process cleanup and clean install; record evidence and unresolved failures |
 
 ## Ordering
 
-Continue feature implementation through Phase 8, including hardening and packaging,
-then run Phase 9's consolidated live/all-feature acceptance. Local regressions,
+Run Phase 9's consolidated live/all-feature acceptance against the Phase 8 package. Local regressions,
 builds and rendered/native UI checks continue throughout as engineering evidence.
 Every live upload needs explicit human approval of the current destination/payload/
 artifact hashes; final acceptance uses an authorized private test publication.
@@ -61,5 +60,5 @@ Phases 2–3, scoped AI retrieval in Phase 4 and clipping context in Phase 5.
   incomplete Phase 0–4 obligations.
 - OS credential vault, background/tray behavior and packaged target platforms.
 - FFmpeg build, codec and distribution licenses before bundling binaries.
-- Detailed time-zone/DST, approval expiry and missed-run product behavior.
+- Physical sleep/offline and OS reminder delivery acceptance for the documented [scheduler policies](SCHEDULING.md).
 - Any future AtrisHub login or hosted/always-on scheduling integration.

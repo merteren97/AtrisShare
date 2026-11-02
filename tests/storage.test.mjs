@@ -126,7 +126,7 @@ test("Phase 1 schema upgrade preserves every dependent row and keeps foreign key
     assert.throws(() => store.setContext({ accountId: other.id, projectId }), /context_not_found/);
     const inspection = new DatabaseSync(path);
     try {
-      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 6);
+      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 10);
       assert.deepEqual(inspection.prepare("PRAGMA foreign_key_check").all(), []);
       assert.ok(inspection.prepare("PRAGMA foreign_key_list(memory)").all().every(row => row.table !== "accounts_next"));
     } finally { inspection.close(); }

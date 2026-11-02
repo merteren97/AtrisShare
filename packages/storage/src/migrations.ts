@@ -1,6 +1,7 @@
 import type { DatabaseSync } from "node:sqlite";
+import { SOCIAL_MIGRATION_SQL } from "./social-store.js";
 
-export const SCHEMA_VERSION = 6;
+export const SCHEMA_VERSION = 10;
 export function migrate(db: DatabaseSync): void {
   // SQLite's documented table-rebuild procedure. Foreign keys are checked before
   // commit and re-enabled on every exit; no dependent rows are dropped.
@@ -119,6 +120,32 @@ export function migrate(db: DatabaseSync): void {
       ) STRICT;
       CREATE INDEX clips_scope ON clip_analyses(account_id,project_id,artifact_id);
       PRAGMA user_version=6;
+    `);
+    if (row.user_version < 7) db.exec(`
+      CREATE TABLE schedules(id TEXT PRIMARY KEY,account_id TEXT NOT NULL REFERENCES accounts(id),project_id TEXT NOT NULL,data TEXT NOT NULL,template TEXT NOT NULL,
+        FOREIGN KEY(project_id,account_id) REFERENCES projects(id,account_id)) STRICT;
+      CREATE INDEX schedules_scope ON schedules(account_id,project_id);
+      CREATE TABLE schedule_occurrences(id TEXT PRIMARY KEY,schedule_id TEXT NOT NULL REFERENCES schedules(id),account_id TEXT NOT NULL,
+        project_id TEXT NOT NULL,due_at TEXT NOT NULL,generation INTEGER NOT NULL,publication_id TEXT UNIQUE,data TEXT NOT NULL,
+        UNIQUE(schedule_id,due_at,generation),FOREIGN KEY(project_id,account_id) REFERENCES projects(id,account_id)) STRICT;
+      CREATE INDEX occurrences_scope ON schedule_occurrences(account_id,project_id,due_at);
+      PRAGMA user_version=7;
+    `);
+    if (row.user_version < 8) { db.exec(SOCIAL_MIGRATION_SQL); db.exec("PRAGMA user_version=8"); }
+    if (row.user_version < 9) db.exec(`CREATE TABLE social_refresh_leases(provider TEXT NOT NULL,app_key TEXT NOT NULL,subject_id TEXT NOT NULL,
+      owner TEXT NOT NULL,lease_until INTEGER NOT NULL,PRIMARY KEY(provider,app_key,subject_id)) STRICT;
+      CREATE TABLE social_cooldowns(account_id TEXT PRIMARY KEY REFERENCES accounts(id),until_ms INTEGER NOT NULL) STRICT;
+      PRAGMA user_version=9;`);
+    if (row.user_version < 10) db.exec(`
+      CREATE TABLE accounts_next (
+        id TEXT PRIMARY KEY, display_name TEXT NOT NULL, platform TEXT NOT NULL,
+        destination_id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('demo','local','connected','reauth-required','disconnected')), created_at TEXT NOT NULL
+      ) STRICT;
+      INSERT INTO accounts_next SELECT * FROM accounts;
+      DROP TABLE accounts;
+      ALTER TABLE accounts_next RENAME TO accounts;
+      PRAGMA user_version=10;
     `);
     if (db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("Migration foreign key check failed");
     db.exec("COMMIT");

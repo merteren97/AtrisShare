@@ -109,7 +109,7 @@ export function EditPanel({ artifact, context, tools, t, errorText, parentBusy, 
               {duration > 0 && <i className="studio-source-playhead" style={{ left: `${Math.min(100, Math.max(0, sourceTime / duration * 100))}%` }} />}
             </div><div className="studio-timeline-times"><span>00:00</span><span>{t("sourceTime")}</span><span>{time(duration)}</span></div>
           </div>
-          <ol className="studio-range-list" aria-label={t("keptRanges")}>{ranges.map((range, index) => <li key={index}><button className={index === selected ? "is-selected" : ""} type="button" aria-pressed={selected === index} onClick={() => selectRange(index)}>
+          <div className="studio-edit-columns"><div className="studio-cut-controls"><ol className="studio-range-list" aria-label={t("keptRanges")}>{ranges.map((range, index) => <li key={index}><button className={index === selected ? "is-selected" : ""} type="button" aria-pressed={selected === index} onClick={() => selectRange(index)}>
             <span className="studio-range-number">{index + 1}</span><span><strong>{time(range.inSeconds)} → {time(range.outSeconds)}</strong><small>{t("outputTime")} {rangesValid ? `${time(outputStarts[index]!)}–${time(outputStarts[index]! + range.outSeconds - range.inSeconds)}` : "—"}</small></span><span>{rangesValid ? time(range.outSeconds - range.inSeconds) : "—"}</span>
           </button></li>)}</ol>
           <div className="studio-selected-range"><strong>{t("range")} {selected + 1}</strong><button className="text-button" type="button" disabled={ranges.length <= 1} onClick={() => { change({ ...fields, segments: fields.segments.filter((_, index) => index !== selected) }); setSelected(Math.max(0, selected - 1)); setSplitTime(""); }}><Trash2 size={12} />{t("removeRange")}</button></div>
@@ -117,13 +117,13 @@ export function EditPanel({ artifact, context, tools, t, errorText, parentBusy, 
             <label className="form-field">{t("trimOut")}<input type="number" min={current?.inSeconds ?? 0} max={selected < ranges.length - 1 ? ranges[selected + 1]!.inSeconds : duration} step="any" required value={fields.segments[selected]?.outSeconds ?? ""} onChange={event => trim("outSeconds", event.target.value)} /></label></div>
           <div className="studio-split-controls"><label className="form-field">{t("splitAt")}<input type="number" min={current?.inSeconds ?? 0} max={current?.outSeconds ?? duration} step="any" value={splitTime} placeholder={time(sourceTime)} onChange={event => setSplitTime(event.target.value)} /></label><button className="button secondary" type="button" disabled={!canSplit} onClick={splitRange}><Scissors size={13} />{t("split")}</button></div>
           <button type="button" className="text-button" disabled={!rangesValid || !current || sourceTime <= current.inSeconds || sourceTime >= current.outSeconds} onClick={() => setSplitTime(String(sourceTime))}>{t("usePlayhead")} · {time(sourceTime)}</button>
-          <p className="studio-help">{t(ranges.length >= 32 ? "rangeLimit" : "rangesHelp")}</p>
+          <p className="studio-help">{t(ranges.length >= 32 ? "rangeLimit" : "rangesHelp")}</p></div>
           <details className="studio-global-settings" open><summary>{t("globalSettings")}</summary>
             <label className="form-field">{t("aspect")}<select value={fields.crop} onChange={event => change({ ...fields, crop: event.target.value as MediaEdit["crop"] })}>{(["original", "vertical", "square"] as const).map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>
             <label className="form-field">{t("framing")}<input type="range" min={0} max={1} step={.01} value={fields.cropX} onChange={event => change({ ...fields, cropX: +event.target.value })} /></label>
             <label className="form-field">{t("gain")}<input type="number" min={-60} max={24} step="any" required value={fields.gainDb} onChange={event => change({ ...fields, gainDb: event.target.value })} /></label>
             <label className="form-field">{t("caption")}<textarea rows={2} maxLength={2000} value={fields.caption} onChange={event => change({ ...fields, caption: event.target.value })} /></label><p className="studio-help">{t("captionHelp")}</p>
-          </details>
+          </details></div>
           {dirty && !valid && <p className="studio-inline-error" role="alert">{t("invalidRanges")}</p>}
           <div className="studio-edit-actions"><button className="button secondary" type="submit" disabled={!valid || !dirty && !!timeline && timeline.cursor >= 0}>{saving && <LoaderCircle size={13} className="spinning" />}{t("save")}</button>
             <button className="icon-button" type="button" title={t("undo")} aria-label={t("undo")} disabled={!timeline || timeline.cursor < 0 || dirty} onClick={() => { void mutate("undo"); }}><RotateCcw size={16} /></button>

@@ -10,8 +10,9 @@ Phase 3's limited manual editor is implemented, including split/kept ranges and
 full-source proxies. Phase 4 core feature implementation is complete: the required
 first real OpenCode adapter, scoped stdio MCP, local timestamped transcription and
 explicit transcript disclosure consent. Additional CLI adapters are future extensions;
-Phase 5 adds reviewed clip discovery and timed captions. Multi-track editing, standalone
-queues and scheduling are not implemented. Live AI and all-feature end-to-end
+Phase 5 adds reviewed clips/timed captions; Phases 6–8 add a durable local scheduler,
+official social adapters, tray/reminders and package hardening. Multi-track editing
+and a separate always-on/cloud worker are not implemented. Live AI and all-feature end-to-end
 acceptance for Phases 0–8 are consolidated at final Phase 9 after Phase 8 hardening,
 packaging and feature completion; local checks continue as engineering evidence.
 See [local workspace details](LOCAL-WORKSPACE.md) and [YouTube](YOUTUBE.md).
@@ -32,7 +33,8 @@ flowchart TD
     Gate --> Social[Official YouTube API transport]
     Client[External MCP client] --> MCP[Official-SDK stdio + scoped grant]
     MCP --> API
-    API -.-> Queue[Planned standalone queue / schedules]
+    API --> Queue[Durable local schedules / per-occurrence review]
+    API --> SocialAdapters[Official X / LinkedIn / TikTok adapters]
     API --> AI[Isolated one-shot OpenCodeBridge]
     AI --> CLI[OpenCode 1.19.5: tools denied]
 ```
@@ -47,8 +49,9 @@ Studio, YouTube, transcription and AI proposal orchestration currently live in `
 `services/worker` directory reserves the future standalone queue boundary. Windows
 uses a custom titlebar and starts Node suspended inside a kill-on-close Job Object
 before resuming it. The job owns Node and its media descendants; native closure or
-owner termination kills that tree. Local tasks stop on close, with no tray/background
-or always-on scheduler. Remote effects already accepted cannot be rolled back by
+owner termination kills that tree. Default close stops tasks; explicit opt-in
+close-to-tray keeps the runtime alive. Quit stops it. No always-on/cloud scheduler
+is provided. Remote effects already accepted cannot be rolled back by
 stopping a process.
 
 AtrisHub is the ecosystem website. No account, entitlement, hosted storage or
@@ -66,7 +69,7 @@ integration needs a separate product decision.
   a changed destination block the job and request reconnection/review.
 - A single OAuth identity may control several destinations; model them explicitly.
 - Store social credentials in the OS vault; SQLite must hold references,
-  not token values. Current demo accounts have no social credentials. The DPAPI
+  not token values. Local workspaces have no social credentials. The DPAPI
   port is internal and not exposed through HTTP or frontend IPC. Unsupported or
   unavailable vaults fail closed; there is no plaintext fallback.
 - Store brand voice, audience, edit history and publication receipts as scoped
@@ -115,8 +118,11 @@ proxy retains source time. The player shows stored bytes, not live unsaved edits
 Proxy and proposal-preview artifacts are not publication artifacts.
 Successful exports and publications add scoped history notes.
 
-External executables resolve from `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or
-`PATH`. Argument arrays, restricted environment/protocols, bounded process output
+User-selected executable paths in `media-tools.json` load before media/transcription
+service construction. Settings verifies named local binaries, saves atomically and
+requires a full restart, preserving running jobs. Empty fields fall back to
+`ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or `PATH`.
+Argument arrays, restricted environment/protocols, bounded process output
 and timeouts avoid a shell or network demuxing. Export uses H.264 `libx264`, AAC
 when audio exists, and static caption text files with `drawtext`. No FFmpeg/FFprobe
 binary is bundled. Temporary GPL-enabled verification tools are not distribution
@@ -209,7 +215,8 @@ caption text so speech cannot bypass transcript consent. See [CLIPS](CLIPS.md).
 The implemented YouTube version-1 payload has fixed-order canonical serialization
 and a SHA-256 digest binding account/project/destination, artifact ID/hash/bytes/MIME,
 title, description, visibility, made-for-kids and subscriber-notification settings.
-There is no schedule field or mutable payload endpoint; changes require a new draft.
+Scheduled payloads also bind occurrence ID, due time and review deadline into the
+digest. There is no mutable payload endpoint; changes require a new draft.
 
 1. Verify the scoped artifact hash and create an immutable `review` record.
 2. Show destination, media/hash, metadata and digest in the trusted review UI.
@@ -248,8 +255,10 @@ fixed error codes keep credentials/provider bodies out of frontend responses.
 
 ## Scheduling, recovery and duplicate prevention
 
-Scheduling and the general worker queue below are planned. Current Studio leases
-provide publication/render ownership, not a recurring scheduler.
+Implemented policies are detailed in [SCHEDULING](SCHEDULING.md). SQLite v7 adds
+schedules/occurrences, v8 scoped social app/grant/posts, and v9 durable remote-refresh
+serialization. Materialization is transactional and performs no external mutation;
+publishers retain their leases. The rules below guide final acceptance:
 
 - Store the IANA time zone and local recurrence rule alongside each computed UTC
   occurrence. Define DST-gap/overlap behavior explicitly before implementation.

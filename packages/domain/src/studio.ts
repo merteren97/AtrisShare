@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { contextSchema, idSchema, type WorkspaceContext } from "./workspace.js";
 import type { MediaEdit, MediaProbe } from "./media.js";
+import type { ScheduleBinding } from "./scheduling.js";
 
 export const studioContextSchema = contextSchema.extend({ projectId: idSchema }).strict();
 export const publicationInputSchema = z.object({
@@ -22,6 +23,7 @@ export interface PublicationPayload {
   version: 1; accountId: string; projectId: string; destinationId: string; artifactId: string; sha256: string;
   bytes: number; mimeType: string; title: string; description: string; visibility: "private" | "unlisted" | "public";
   madeForKids: boolean; notifySubscribers: boolean;
+  scheduleBinding?: ScheduleBinding;
 }
 export interface StudioPublication {
   id: string; context: WorkspaceContext; revision: 1; payload: PublicationPayload; digest: string;

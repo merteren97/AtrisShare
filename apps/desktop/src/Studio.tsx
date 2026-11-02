@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
-import { ArrowDownToLine, Check, CircleAlert, Clapperboard, ExternalLink, FileVideo, Film, FolderOpen, Link2, LoaderCircle, Plus, RefreshCw, ShieldCheck, Upload, X } from "lucide-react";
+import { ArrowDownToLine, Check, CircleAlert, Clapperboard, ExternalLink, FileVideo, Film, FolderOpen, Link2, LoaderCircle, Plus, RefreshCw, Scissors, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import type { WorkspaceAccount, WorkspaceContext } from "../../../packages/domain/src/workspace.js";
 import { binaryRequest, mediaBlob, request } from "./api";
 import { studioError, studioText, type StudioLanguage, type StudioTranslate } from "./studio-i18n";
 import { EditPanel } from "./TimelineEditor";
 import { AssistantPanel } from "./AssistantPanel";
 import { ClipPanel } from "./ClipPanel";
+import type { ScheduleBinding } from "../../../packages/domain/src/scheduling.js";
 import "./studio.css";
 
 export interface StudioArtifact {
@@ -18,14 +19,14 @@ export interface StudioArtifact {
 export interface StudioPublication {
   id: string; context: WorkspaceContext; revision: 1;
   payload: { version: 1; accountId: string; projectId: string; destinationId: string; artifactId: string; sha256: string; bytes: number; mimeType: string;
-    title: string; description: string; visibility: "private" | "unlisted" | "public"; madeForKids: boolean; notifySubscribers: boolean };
+    title: string; description: string; visibility: "private" | "unlisted" | "public"; madeForKids: boolean; notifySubscribers: boolean; scheduleBinding?: ScheduleBinding };
   digest: string; state: "review" | "uploading" | "uncertain" | "processing" | "succeeded" | "failed" | "cancelled";
   approvalExpiresAt: string | null; progress: number; videoId: string | null; error: string | null; createdAt: string;
 }
 export interface StudioRender { id: string; sourceId: string; kind?: "proxy" | "export" | "preview"; state: "running" | "succeeded" | "failed" | "cancelled"; progress: number; error: string | null; artifactId: string | null }
 interface StudioSnapshot { artifacts: StudioArtifact[]; publications: StudioPublication[]; tools: { available: boolean; ffmpeg: boolean; ffprobe: boolean }; renders: StudioRender[] }
 interface Catalog { items: { id: string; title: string; publishedAt: string; thumbnail: string | null }[]; nextPageToken: string | null }
-export interface StudioProps { context: WorkspaceContext; account: WorkspaceAccount; language: StudioLanguage; errorText: (e: unknown) => string }
+export interface StudioProps { context: WorkspaceContext; account: WorkspaceAccount; language: StudioLanguage; errorText: (e: unknown) => string; initialTab?: "media" | "publishing"; projectName?: string; onToolSettings?: () => void }
 
 const BLOB_LIMIT = 256 * 1024 * 1024;
 const pendingPublication = (item: StudioPublication) => item.state === "uploading" || item.state === "processing";
@@ -50,12 +51,12 @@ export function Studio(props: StudioProps) {
   return <StudioWorkspace key={`${props.context.accountId}:${props.context.projectId}:${props.account.destinationId}`} {...props} />;
 }
 
-function StudioWorkspace({ context, account, language, errorText }: StudioProps) {
+function StudioWorkspace({ context, account, language, errorText, initialTab = "media", projectName, onToolSettings }: StudioProps) {
   const t = studioText(language);
   const translateError = (error: unknown) => studioError(error, t, errorText);
   const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [tab, setTab] = useState<"media" | "publishing" | "channel">("media");
+  const [tab, setTab] = useState<"media" | "publishing" | "channel">(initialTab);
   const [inspector, setInspector] = useState<"publish" | "edit" | "assistant" | "clips">("edit");
   const [timelineEpoch, setTimelineEpoch] = useState(0);
   const [sourceTime, setSourceTime] = useState(0);
@@ -85,6 +86,8 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
   const connected = account.platform === "youtube" && account.status === "connected";
   const selected = snapshot?.artifacts.find(item => item.id === selectedId) ?? null;
   const uniqueId = useId();
+  useEffect(() => setTab(initialTab), [initialTab]);
+  useEffect(() => { if (!notice) return; const timer = setTimeout(() => setNotice(null), 4500); return () => clearTimeout(timer); }, [notice]);
 
   const refresh = useCallback(async () => {
     refreshAbort.current?.abort();
@@ -183,7 +186,7 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
 
   return <div className="studio">
     <header className="studio-heading">
-      <div><p className="eyebrow">{t("studio")}</p><h1>{t("studioTitle")}</h1><p>{t("subtitle")}</p></div>
+      <div><p className="eyebrow">{t("studio")}</p><h1>{projectName ?? t("studioTitle")}</h1></div>
       <div className="studio-heading-actions"><span className="studio-count">{snapshot ? snapshot.artifacts.length : "—"} {t(snapshot?.artifacts.length === 1 ? "mediaCountOne" : "mediaCount")}</span>
         <button className="button primary" disabled={busy || !snapshot} onClick={() => input.current?.click()}>{importing ? <LoaderCircle size={16} className="spinning" /> : <Plus size={16} />}{t(importing ? "importing" : "import")}</button>
         <input ref={input} className="studio-file-input" type="file" accept=".mp4,.mov,.webm,.mkv" aria-label={t("import")} onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) importFile(file); }} />
@@ -198,8 +201,13 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
     {!!error && !approval && <div className="studio-alert" role="alert"><CircleAlert size={16} /><span>{translateError(error)}</span><button className="icon-button" onClick={() => setError(null)} aria-label={t("close")}><X size={14} /></button></div>}
     {notice && <p className="studio-notice" role="status"><Check size={14} />{t(notice)}</p>}
     {!snapshot ? !loadError && <div className="loading-state" role="status"><LoaderCircle className="spinning" />{t("loading")}</div> : <>
+      {!snapshot.tools.available && <div className="studio-callout studio-tools-callout"><div><strong>{t("toolsMissing")}</strong><p>{t("toolsHelp")}</p></div>{onToolSettings && <button className="button secondary" onClick={onToolSettings}>{t("toolSettings")}</button>}</div>}
       <section role="tabpanel" id={`${uniqueId}-panel-media`} aria-labelledby={`${uniqueId}-media`} hidden={tab !== "media"}>
-        <div className="studio-workbench">
+        <div className="studio-modebar"><div className="studio-segmented" role="tablist" aria-label={t("studioTitle")}>
+          {(["edit", "clips", "assistant", "publish"] as const).map(name => { const Icon = name === "edit" ? Scissors : name === "clips" ? Film : name === "assistant" ? Sparkles : Upload; return <button key={name} role="tab" aria-selected={inspector === name} id={`${uniqueId}-${name}`} aria-controls={`${uniqueId}-inspector-${name}`} tabIndex={inspector === name ? 0 : -1}
+            onKeyDown={event => { const tabs = ["edit", "clips", "assistant", "publish"] as const; const index = tabs.indexOf(name); const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null; if (next) { event.preventDefault(); setInspector(next); document.getElementById(`${uniqueId}-${next}`)?.focus(); } }} onClick={() => setInspector(name)}><Icon size={14} />{t(name)}</button>; })}
+        </div><span className="studio-mode-help">{t(inspector === "edit" ? "editingMode" : inspector === "clips" ? "clipsMode" : inspector === "assistant" ? "assistantMode" : "publishMode")}</span></div>
+        <div className={`studio-workbench ${inspector === "edit" ? "is-editing" : ""}`}>
           <aside className="studio-library"><div className="studio-pane-heading"><h2>{t("library")}</h2><span className="count">{snapshot.artifacts.length}</span></div>
             {snapshot.artifacts.length ? <ul className="studio-files">{snapshot.artifacts.map(item => <li key={item.id}><button className={`studio-file ${item.id === selectedId ? "is-selected" : ""}`} aria-pressed={item.id === selectedId} onClick={() => setSelectedId(item.id)}>
               <span className="studio-file-icon"><FileVideo size={19} /></span><span className="studio-file-copy"><strong title={item.filename}>{item.filename}</strong><small>{item.probe ? seconds(item.probe.duration) : bytes(item.bytes, language)} · {t(item.kind === "export" || !item.kind && item.sourceId ? "exported" : "source")}</small></span>{item.channelVideoId && <Link2 size={12} aria-label={t("linked")} />}
@@ -216,13 +224,10 @@ function StudioWorkspace({ context, account, language, errorText }: StudioProps)
               <div className="studio-preview-caption"><div><h2>{selected.filename}</h2><p>{selected.probe ? `${seconds(selected.probe.duration)} · ${selected.probe.width} × ${selected.probe.height}${selected.probe.hasAudio ? "" : ` · ${t("noAudio")}`}` : t("noProbe")} · {bytes(selected.bytes, language)}</p></div>
                 <button className="icon-button" aria-label={t("download")} title={t("download")} disabled={busy || selected.bytes > BLOB_LIMIT} onClick={() => download(selected)}><ArrowDownToLine size={17} /></button></div>
               <details className="studio-file-details"><summary>{t("hash")}</summary><code>{selected.sha256}</code></details>
-              <RenderList renders={snapshot.renders.filter(item => item.sourceId === selected.id && item.kind !== "preview")} artifacts={snapshot.artifacts} t={t} busy={busy} errorText={translateError} open={selectArtifact} cancel={item => { void act(async signal => { const value = await request<StudioRender>(`/api/renders/${encodeURIComponent(item.id)}/cancel`, "POST", { context: scope }, signal); if (!signal.aborted) updateRender(value); }); }} />
+              {snapshot.renders.some(item => item.sourceId === selected.id && item.kind !== "preview") && <details className="studio-render-details" open={snapshot.renders.some(item => item.sourceId === selected.id && item.kind !== "preview" && item.state === "running") || undefined}><summary>{t("renderJobs")} <span className="count">{snapshot.renders.filter(item => item.sourceId === selected.id && item.kind !== "preview").length}</span></summary><RenderList renders={snapshot.renders.filter(item => item.sourceId === selected.id && item.kind !== "preview")} artifacts={snapshot.artifacts} t={t} busy={busy} errorText={translateError} open={selectArtifact} cancel={item => { void act(async signal => { const value = await request<StudioRender>(`/api/renders/${encodeURIComponent(item.id)}/cancel`, "POST", { context: scope }, signal); if (!signal.aborted) updateRender(value); }); }} /></details>}
             </> : <div className="studio-preview-empty"><div className="studio-empty-frame"><Clapperboard size={38} strokeWidth={1.2} /></div><h2>{t(snapshot.artifacts.length ? "selectMedia" : "emptyLibrary")}</h2><p>{t(snapshot.artifacts.length ? "selectMediaHelp" : "emptyLibraryHelp")}</p>{!snapshot.artifacts.length && <button className="button secondary" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} />{t("import")}</button>}</div>}
           </div>
-          <aside className="studio-inspector"><div className="studio-segmented" role="tablist" aria-label={selected?.filename ?? t("selectMedia")}>
-            {(["edit", "clips", "assistant", "publish"] as const).map(name => <button key={name} role="tab" aria-selected={inspector === name} id={`${uniqueId}-${name}`} aria-controls={`${uniqueId}-inspector-${name}`} tabIndex={inspector === name ? 0 : -1}
-              onKeyDown={event => { const tabs = ["edit", "clips", "assistant", "publish"] as const; const index = tabs.indexOf(name); const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null; if (next) { event.preventDefault(); setInspector(next); document.getElementById(`${uniqueId}-${next}`)?.focus(); } }} onClick={() => setInspector(name)}>{t(name)}</button>)}
-          </div>{selected ? <>
+          <aside className="studio-inspector">{selected ? <>
             <div role="tabpanel" id={`${uniqueId}-inspector-publish`} aria-labelledby={`${uniqueId}-publish`} hidden={inspector !== "publish"}><PublishForm key={selected.id} artifact={selected} account={account} t={t} busy={busy} connected={connected} submit={fields => {
               void act(async signal => { const result = await request<StudioPublication>("/api/publications", "POST", { context: scope, artifactId: selected.id, ...fields }, signal); if (signal.aborted) return; updatePublication(result); setTab("publishing"); setNotice("draftCreated"); });
             }} /></div>
@@ -374,6 +379,7 @@ function RenderList({ renders, artifacts, t, busy, errorText, open, cancel }: { 
 function ApprovalDetails({ publication, artifact, t, language }: { publication: StudioPublication; artifact: StudioArtifact | null; t: StudioTranslate; language: StudioLanguage }) {
   const payload = publication.payload;
   return <dl className="studio-approval-details">
+    {payload.scheduleBinding && <div><dt>{language === "tr" ? "Planlanan zaman" : "Scheduled time"}</dt><dd>{new Date(payload.scheduleBinding.dueAt).toLocaleString(language)}<br />{language === "tr" ? "Gönderim: şimdi onay sonrası. İnceleme sonu: " : "Dispatch: after approval now. Review expires: "}{new Date(payload.scheduleBinding.reviewUntil).toLocaleString(language)}</dd></div>}
     <div><dt>{t("channelId")}</dt><dd><code>{payload.destinationId}</code></dd></div>
     <div><dt>{t("filename")}</dt><dd>{artifact?.filename ?? payload.artifactId}</dd></div>
     <div><dt>{t("size")}</dt><dd>{bytes(payload.bytes, language)} · {payload.mimeType}</dd></div>

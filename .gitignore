@@ -35,6 +35,7 @@ coverage/
 oauth-tokens*.json
 client_secret*.json
 service-account*.json
+media-tools.json
 
 # Account memory, databases, source media, transcripts, renders and local jobs.
 /data/

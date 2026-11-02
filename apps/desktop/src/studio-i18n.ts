@@ -1,8 +1,10 @@
 export type StudioLanguage = "tr" | "en";
 
 const en = {
+  toolSettings: "Open video tool settings",
+  editingMode: "Non-destructive editing", clipsMode: "Find and refine short clips", assistantMode: "Review AI edit proposals", publishMode: "Prepare a YouTube publication",
   clips: "Clips", framing: "Horizontal framing · left → right",
-  studio: "Studio", studioTitle: "Media studio", subtitle: "Prepare your media. Review every publication.", media: "Media", publishing: "Publishing", channel: "Channel",
+  studio: "Video editor", studioTitle: "Video editor", subtitle: "Import footage, shape your timeline and export your video.", media: "Video editor", publishing: "Publishing", channel: "Channel",
   mediaCount: "media files", mediaCountOne: "media file", import: "Import video", importing: "Importing video…", refresh: "Refresh", retry: "Try again", loading: "Loading…",
   chooseProject: "Choose a project to open Studio", chooseProjectHelp: "Select a project in the workspace bar. Media and publications belong to that account and project.",
   scopeMismatch: "Select the matching workspace account to open Studio.", library: "Library", source: "Source", exported: "Export", linked: "Linked to channel",
@@ -11,7 +13,7 @@ const en = {
   previewLoading: "Loading video…", previewFailed: "This video could not be played in the desktop player. You can still download it or export a compatible version.",
   previewLimit: "This player can load files up to 256 MB. Create a compatible preview for a larger source. If that preview also exceeds the limit, editing and exporting remain available.",
   download: "Download file", noProbe: "Media details unavailable", duration: "Duration", dimensions: "Dimensions", size: "File size", hash: "SHA-256", filename: "File",
-  publish: "Publish", edit: "Edit", destination: "Destination", channelId: "Channel ID", title: "Title", description: "Description", visibility: "Visibility",
+  publish: "Publish", edit: "Edit video", destination: "Destination", channelId: "Channel ID", title: "Title", description: "Description", visibility: "Visibility",
   private: "Private", unlisted: "Unlisted", public: "Public", madeForKids: "Made for kids", notifySubscribers: "Notify subscribers", yes: "Yes", no: "No",
   createDraft: "Create review draft", draftHelp: "Creates an immutable draft. Upload starts only after you review and approve its exact contents.",
   connectRequired: "Connect this YouTube account to publish or refresh its channel catalog.", unsupported: "Publishing and channel access are currently available for connected YouTube accounts.",
@@ -25,7 +27,7 @@ const en = {
   aspect: "Aspect ratio", original: "Original", vertical: "Vertical · 9:16", square: "Square · 1:1", gain: "Audio gain (dB)", caption: "Caption", captionHelp: "Burned into the exported video. Leave empty for no caption.",
   save: "Save edit", undo: "Undo", redo: "Redo", export: "Export video", unsaved: "Unsaved changes", saved: "Edit saved", saveBeforeExport: "Save your changes before exporting.",
   noEdits: "Save a clip setting to enable export.", timeline: "Source timeline", selectedRange: "Selected range", invalidTrim: "Enter a valid range within the source duration and a gain between −60 and 24 dB.",
-  toolsMissing: "Editing tools are unavailable", toolsHelp: "Install external FFmpeg and FFprobe, add them to PATH or set ATRIS_SHARE_FFMPEG and ATRIS_SHARE_FFPROBE, then restart the local service and refresh. These tools are not bundled.",
+  toolsMissing: "Set up video processing", toolsHelp: "Install FFmpeg and FFprobe, then save their file paths in Settings → Video tools. Fully quit and reopen the app to activate them.",
   durationRequired: "A probed source duration is required to edit this file. After configuring FFprobe, import the source again to inspect it.", renderJobs: "Media jobs", renderReady: "Export added to your library.", openExport: "Open export", renderStarted: "Export started.",
   channelTitle: "Channel catalog", channelHelp: "Refresh explicitly to retrieve videos from this connected YouTube channel.", catalogEmpty: "No channel videos returned.", catalogNotLoaded: "The channel catalog has not been loaded.", loadMore: "Load more", linkVideo: "Link selected file", linkHelp: "Links the selected local file to a video owned by this channel. Ownership is validated by YouTube on the service.",
   linkedDone: "Channel video linked to the selected file.", selectedFile: "Selected local file", selectToLink: "Select a local file in Media before linking a channel video.",
@@ -47,8 +49,10 @@ const en = {
 
 type StudioTextKey = keyof typeof en;
 const tr: Record<StudioTextKey, string> = {
+  toolSettings: "Video araç ayarlarını aç",
+  editingMode: "Kaynağı koruyan düzenleme", clipsMode: "Kısa klipleri bul ve düzenle", assistantMode: "AI kurgu önerilerini incele", publishMode: "YouTube yayını hazırla",
   clips: "Klipler", framing: "Yatay kadraj · sol → sağ",
-  studio: "Stüdyo", studioTitle: "Medya stüdyosu", subtitle: "Medyanızı hazırlayın. Her yayını gözden geçirin.", media: "Medya", publishing: "Yayınlar", channel: "Kanal",
+  studio: "Video editörü", studioTitle: "Video editörü", subtitle: "Videonu içe aktar, zaman çizelgesini düzenle ve dışa aktar.", media: "Video editörü", publishing: "Yayınlar", channel: "Kanal",
   mediaCount: "medya dosyası", mediaCountOne: "medya dosyası", import: "Video içe aktar", importing: "Video içe aktarılıyor…", refresh: "Yenile", retry: "Tekrar dene", loading: "Yükleniyor…",
   chooseProject: "Stüdyoyu açmak için bir proje seçin", chooseProjectHelp: "Çalışma alanı çubuğundan bir proje seçin. Medya ve yayınlar bu hesaba ve projeye aittir.",
   scopeMismatch: "Stüdyoyu açmak için eşleşen çalışma alanı hesabını seçin.", library: "Kitaplık", source: "Kaynak", exported: "Dışa aktarım", linked: "Kanal ile bağlantılı",
@@ -57,7 +61,7 @@ const tr: Record<StudioTextKey, string> = {
   previewLoading: "Video yükleniyor…", previewFailed: "Bu video masaüstü oynatıcısında oynatılamadı. Dosyayı indirebilir veya uyumlu bir sürümünü dışa aktarabilirsiniz.",
   previewLimit: "Bu oynatıcı en fazla 256 MB yükleyebilir. Büyük kaynaklar için uyumlu önizleme oluşturun. Önizleme de sınırı aşarsa düzenleme ve dışa aktarma kullanılabilir.",
   download: "Dosyayı indir", noProbe: "Medya bilgileri alınamadı", duration: "Süre", dimensions: "Boyutlar", size: "Dosya boyutu", hash: "SHA-256", filename: "Dosya",
-  publish: "Yayınla", edit: "Düzenle", destination: "Hedef", channelId: "Kanal kimliği", title: "Başlık", description: "Açıklama", visibility: "Görünürlük",
+  publish: "Yayınla", edit: "Video düzenle", destination: "Hedef", channelId: "Kanal kimliği", title: "Başlık", description: "Açıklama", visibility: "Görünürlük",
   private: "Gizli", unlisted: "Liste dışı", public: "Herkese açık", madeForKids: "Çocuklara özel", notifySubscribers: "Abonelere bildirim gönder", yes: "Evet", no: "Hayır",
   createDraft: "İnceleme taslağı oluştur", draftHelp: "Değiştirilemez bir taslak oluşturur. Yükleme, içeriği gözden geçirip onayladıktan sonra başlar.",
   connectRequired: "Yayınlamak veya kanal listesini yenilemek için bu YouTube hesabını bağlayın.", unsupported: "Yayınlama ve kanal erişimi şu anda bağlı YouTube hesaplarında kullanılabilir.",
@@ -71,7 +75,7 @@ const tr: Record<StudioTextKey, string> = {
   aspect: "En boy oranı", original: "Özgün", vertical: "Dikey · 9:16", square: "Kare · 1:1", gain: "Ses kazancı (dB)", caption: "Altyazı", captionHelp: "Dışa aktarılan videoya işlenir. Altyazı istemiyorsanız boş bırakın.",
   save: "Düzenlemeyi kaydet", undo: "Geri al", redo: "Yinele", export: "Videoyu dışa aktar", unsaved: "Kaydedilmemiş değişiklikler", saved: "Düzenleme kaydedildi", saveBeforeExport: "Dışa aktarmadan önce değişikliklerinizi kaydedin.",
   noEdits: "Dışa aktarımı açmak için bir klip ayarı kaydedin.", timeline: "Kaynak zaman çizelgesi", selectedRange: "Seçili aralık", invalidTrim: "Kaynak süresi içinde geçerli bir aralık ve −60 ile 24 dB arasında ses kazancı girin.",
-  toolsMissing: "Düzenleme araçları kullanılamıyor", toolsHelp: "Harici FFmpeg ve FFprobe’u yükleyin; PATH’e ekleyin veya ATRIS_SHARE_FFMPEG ve ATRIS_SHARE_FFPROBE değişkenlerini ayarlayın. Ardından yerel servisi yeniden başlatıp yenileyin. Bu araçlar uygulamayla dağıtılmaz.",
+  toolsMissing: "Video işleme araçlarını ayarla", toolsHelp: "FFmpeg ve FFprobe’u kurduktan sonra Ayarlar → Video araçları bölümünden dosya yollarını kaydet. Etkinleştirmek için uygulamadan tamamen çıkıp yeniden aç.",
   durationRequired: "Düzenleme için kaynak süresinin analiz edilmesi gerekir. FFprobe’u yapılandırdıktan sonra analiz için kaynağı yeniden içe aktarın.", renderJobs: "Medya işlemleri", renderReady: "Dışa aktarılan dosya kitaplığınıza eklendi.", openExport: "Çıktıyı aç", renderStarted: "Dışa aktarım başladı.",
   channelTitle: "Kanal videoları", channelHelp: "Bu bağlı YouTube kanalının videolarını almak için yenileyin.", catalogEmpty: "Kanal videosu bulunamadı.", catalogNotLoaded: "Kanal videoları henüz yüklenmedi.", loadMore: "Daha fazla yükle", linkVideo: "Seçili dosyayı bağla", linkHelp: "Seçili yerel dosyayı bu kanala ait bir videoyla eşleştirir. Sahiplik, serviste YouTube üzerinden doğrulanır.",
   linkedDone: "Kanal videosu seçili dosyayla eşleştirildi.", selectedFile: "Seçili yerel dosya", selectToLink: "Bir kanal videosunu bağlamadan önce Medya bölümünden yerel bir dosya seçin.",

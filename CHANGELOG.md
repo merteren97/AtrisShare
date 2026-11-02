@@ -1,6 +1,24 @@
 # Changelog
 
-## Unreleased — manual editor, AI bridge and reviewed clips
+## Unreleased — local schedules, social adapters and preview hardening
+
+- SQLite v7–v9 local schedules/occurrences, timing/hash-bound fresh reviews, one-off/
+  daily/weekly IANA recurrence, DST/missed/24h-review policies, pause/resume/reschedule
+  and CAS. Processing checks have capped backoff; ambiguous effects never blindly repost.
+- Queue/agenda, optional native reminders and persisted opt-in close-to-tray, Show/
+  Quit preserving owned runtime cleanup. Default close still exits.
+- Official X/LinkedIn text/video and TikTok video adapters, native OAuth/app setup,
+  fresh identity/roles, durable remote-refresh serialization, per-target variants and
+  independent immutable human approvals/receipts. Exact X counting, LinkedIn literal
+  text and fresh TikTok creator/privacy/disclosure/music consent at every review.
+- Isolated actual-model AI text proposals with exact-project memory opt-in,
+  cancellation and Apply/Reject. No AI approval/publication authority.
+- Scoped memory JSON export, retention policy, fresh standalone runtime staging,
+  strict SHA-256 inventories/full frontend/Rust/runtime notices and non-publishing
+  Windows native/unsigned NSIS CI. Live providers/clean install remain Phase 9;
+  release/signing/updater/deployment requires separate authorization.
+
+### Earlier implementation
 
 - Phase 5 clip discovery: bounded local FFmpeg scene/silence and timestamped speech
   evidence, optional source-edit overlap, deterministic scores and consented OpenCode

@@ -7,6 +7,7 @@
     "beforeDevCommand": "npm run dev:native",
     "devUrl": "http://127.0.0.1:1438",
     "beforeBuildCommand": "npm run build && npm run stage:runtime",
+    "beforeBundleCommand": "node ../../scripts/package-inventory.mjs --verify src-tauri/runtime",
     "frontendDist": "../dist"
   },
   "app": {
@@ -20,7 +21,9 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": false,
     "targets": ["nsis"],
+    "licenseFile": "runtime/LICENSE.txt",
     "resources": { "runtime/": "runtime/" },
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "shortDescription": "Local social workspace — developer preview",
