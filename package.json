@@ -15,7 +15,7 @@
     "typecheck": "tsc --noEmit && npm run typecheck -w @atris-share/desktop",
     "build:core": "tsc -p tsconfig.build.json",
     "build": "npm run build:core && npm run build -w @atris-share/desktop",
-    "test": "npm run build:core && node --test tests/storage.test.mjs tests/api.test.mjs tests/youtube.test.mjs tests/youtube-publishing.test.mjs tests/youtube-setup.test.mjs tests/media-engine.test.mjs tests/studio.test.mjs tests/ai-bridge.test.mjs tests/ai.test.mjs tests/mcp.test.mjs tests/transcription-engine.test.mjs tests/transcription.test.mjs tests/transcription-api.test.mjs tests/clips.test.mjs tests/scheduling.test.mjs tests/social.test.mjs tests/social-text.test.mjs tests/social-text-http.test.mjs",
+    "test": "npm run build:core && node --test tests/storage.test.mjs tests/vault-helper.test.mjs tests/api.test.mjs tests/youtube.test.mjs tests/youtube-publishing.test.mjs tests/youtube-setup.test.mjs tests/media-engine.test.mjs tests/studio.test.mjs tests/ai-bridge.test.mjs tests/ai.test.mjs tests/mcp.test.mjs tests/transcription-engine.test.mjs tests/transcription.test.mjs tests/transcription-api.test.mjs tests/clips.test.mjs tests/scheduling.test.mjs tests/social.test.mjs tests/social-text.test.mjs tests/social-text-http.test.mjs",
     "test:packaging": "node --test tests/packaging.test.mjs",
     "test:release": "node --test tests/release.test.mjs",
     "test:runtime": "npm run stage:runtime && node --test tests/runtime.test.mjs",

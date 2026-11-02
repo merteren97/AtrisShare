@@ -7,6 +7,7 @@ import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprot
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { editSchema } from "../../../packages/domain/src/media.js";
+import { APP_VERSION } from "../../../packages/domain/src/workspace.js";
 
 const RESPONSE_LIMIT = 1024 * 1024;
 const HTTP_TIMEOUT_MS = 30_000;
@@ -152,7 +153,7 @@ export async function startMcp(env: NodeJS.ProcessEnv = process.env): Promise<{ 
   // owner EOF immediately (even if discovery has not returned any headers).
   const input = new PassThrough();
   const api = new GrantApi(origin, grant, lifetime.signal);
-  const server = new McpServer({ name: "atris-share", version: "0.1.0-preview.1" },
+  const server = new McpServer({ name: "atris-share", version: APP_VERSION },
     { capabilities: { tools: {} }, maxToolInputElements: 256 });
   let closed = false;
   const close = async () => {

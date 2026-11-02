@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import type { VaultStatus } from "../../domain/src/workspace.js";
 
 /** Internal credential port. No vault methods are exposed over HTTP or frontend IPC. */
@@ -20,25 +20,36 @@ class UnavailableVault implements CredentialVault {
 }
 
 /** DPAPI CurrentUser; secrets travel over stdin, never command arguments or plaintext files. */
-function dpapi(input: Buffer, operation: "Protect" | "Unprotect"): Promise<Buffer> {
-  const script = `$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $bytes=[Convert]::FromBase64String([Console]::In.ReadToEnd()); $result=[Security.Cryptography.ProtectedData]::${operation}($bytes,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($result));`;
+export function dpapi(input: Buffer, operation: "Protect" | "Unprotect" | "RoundTrip", options: { spawn?: typeof spawn } = {}): Promise<Buffer> {
+  if (!["Protect", "Unprotect", "RoundTrip"].includes(operation)) throw new Error("Invalid credential operation");
+  const transform = operation === "RoundTrip"
+    ? "$protected=[Security.Cryptography.ProtectedData]::Protect($bytes,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser); $result=[Security.Cryptography.ProtectedData]::Unprotect($protected,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);"
+    : `$result=[Security.Cryptography.ProtectedData]::${operation}($bytes,$null,[Security.Cryptography.DataProtectionScope]::CurrentUser);`;
+  const script = `$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $bytes=[Convert]::FromBase64String([Console]::In.ReadToEnd()); ${transform} [Console]::Out.Write([Convert]::ToBase64String($result));`;
   return new Promise((resolve, reject) => {
-    const child = spawn("powershell.exe", ["-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
+    const executable = win32.join(process.env.SystemRoot ?? process.env.WINDIR ?? "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+    const child = (options.spawn ?? spawn)(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], {
       windowsHide: true, stdio: ["pipe", "pipe", "ignore"]
     });
     const chunks: Buffer[] = [];
     let bytes = 0;
-    const timeout = setTimeout(() => child.kill(), 8000);
+    let failure: string | null = null;
+    // Cold PowerShell/.NET startup can exceed 8s on a loaded hosted Windows
+    // runner. A single startup probe now performs both DPAPI operations; its
+    // bounded 15s budget fits inside the native runtime's 20s readiness wait.
+    const timeout = setTimeout(() => { failure = "OS credential operation timed out"; child.kill(); }, 15000);
     child.on("error", () => { clearTimeout(timeout); reject(new Error("OS credential operation failed")); });
     child.stdin.on("error", () => { /* A failed child is reported by exit/error. */ });
     child.stdout.on("data", (chunk: Buffer) => {
       bytes += chunk.length;
-      if (bytes > 256 * 1024) child.kill(); else chunks.push(chunk);
+      if (bytes > 256 * 1024) { failure ??= "OS credential operation failed"; child.kill(); } else chunks.push(chunk);
     });
     child.on("close", code => {
       clearTimeout(timeout);
-      if (code !== 0 || bytes > 256 * 1024) reject(new Error("OS credential operation failed"));
-      else resolve(Buffer.from(Buffer.concat(chunks).toString().trim(), "base64"));
+      const text = Buffer.concat(chunks).toString("utf8").trim();
+      const decoded = Buffer.from(text, "base64");
+      if (failure || code !== 0 || !decoded.length || decoded.toString("base64") !== text) reject(new Error(failure ?? "OS credential operation failed"));
+      else resolve(decoded);
     });
     child.stdin.end(input.toString("base64"));
   });
@@ -77,8 +88,7 @@ export async function createCredentialVault(dataDirectory: string): Promise<Cred
   if (process.platform !== "win32") return new UnavailableVault();
   try {
     const probe = Buffer.from(randomUUID());
-    const encrypted = await dpapi(probe, "Protect");
-    if (!(await dpapi(encrypted, "Unprotect")).equals(probe)) return new UnavailableVault();
+    if (!(await dpapi(probe, "RoundTrip")).equals(probe)) return new UnavailableVault();
     return new WindowsDpapiVault(join(dataDirectory, "vault"));
   } catch { return new UnavailableVault(); }
 }

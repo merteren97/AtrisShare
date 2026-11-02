@@ -3,6 +3,11 @@ name: Desktop release
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: "Version, e.g. 0.2.0 or 0.2.0-beta.1 (blank uses source version; no automatic increment)"
+        type: string
+        required: false
+        default: ""
       draft:
         description: "Create a draft release (uncheck to publish after both platforms pass)"
         type: boolean
@@ -23,6 +28,7 @@ jobs:
       version: ${{ steps.metadata.outputs.version }}
       tag: ${{ steps.metadata.outputs.tag }}
       prerelease: ${{ steps.metadata.outputs.prerelease }}
+      source_version: ${{ steps.metadata.outputs.source_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,16 +36,18 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
-      - name: Validate all application version sources
+      - name: Select and apply the release version
         id: metadata
-        run: node scripts/release-package.mjs metadata
+        env:
+          RELEASE_VERSION_INPUT: ${{ inputs.version }}
+        run: node scripts/release-package.mjs prepare
       - name: Require a new release tag
         env:
           RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
         run: |
           existing="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
           if [[ -n "$existing" ]]; then
-            echo "::error::The version tag already exists. Update the application version before a new release."
+            echo "::error::The version tag already exists. Enter a new release version."
             exit 1
           fi
 
@@ -61,6 +69,7 @@ jobs:
     env:
       # linuxdeploy's AppImage tools can run on hosted runners without a FUSE mount.
       APPIMAGE_EXTRACT_AND_RUN: "1"
+      RELEASE_VERSION_INPUT: ${{ needs.prepare.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,6 +85,8 @@ jobs:
         with:
           node-version-file: .nvmrc
           cache: npm
+      - name: Apply the selected version to this build workspace
+        run: node scripts/release-package.mjs prepare
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -114,6 +125,8 @@ jobs:
       RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
       PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
       DRAFT_RELEASE: ${{ inputs.draft }}
+      RELEASE_VERSION_INPUT: ${{ needs.prepare.outputs.version }}
+      SOURCE_VERSION: ${{ needs.prepare.outputs.source_version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -126,9 +139,11 @@ jobs:
           pattern: desktop-*
           merge-multiple: true
           path: release-artifacts/combined
-      - name: Require both platforms and verify every installer checksum
-        run: node scripts/release-package.mjs verify release-artifacts/combined
-      - name: Create release at the exact built commit and attach installers
+      - name: Apply release metadata and record reproducible source/version provenance
+        run: |
+          node scripts/release-package.mjs prepare
+          node scripts/release-package.mjs finalize release-artifacts/combined
+      - name: Create release from the source commit and selected version
         shell: bash
         run: |
           flags=()

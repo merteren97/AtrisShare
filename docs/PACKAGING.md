@@ -57,14 +57,15 @@ CI calls it explicitly. `test:runtime` stages and exercises relocated Node/API/M
 after the workflow is present on the default branch. It has only `workflow_dispatch`;
 ordinary pushes and tags do not publish releases.
 
-1. Keep the application version synchronized in root/desktop `package.json`,
-   `package-lock.json` (top-level, root and desktop entries), Tauri config,
-   Cargo manifest/lock and domain `APP_VERSION`. Run
-   `node scripts/release-package.mjs metadata` to check them. The tag is `v` plus
-   that version; prerelease versions such as `0.1.0-preview.1` are marked prerelease.
-2. Open **Actions → Desktop release → Run workflow**, select the desired source
-   branch, and leave **draft** checked to create a draft. Uncheck it only when you
-   intend the successful run to publish the release.
+1. Open **Actions → Desktop release → Run workflow** and select the source branch.
+   The optional **version** field accepts SemVer such as `0.2.0`, `0.2.0-beta.1`
+   or `v0.2.0` (the leading `v` is normalized). Leave it blank to use the checked-out
+   source version. There is **no automatic patch/minor/major increment** and no
+   lookup of the latest GitHub release. The tag is `v` plus the selected version;
+   a suffix such as `-beta.1` automatically marks the release as prerelease.
+2. Leave **draft** checked to create a draft. Uncheck it only when you intend the
+   successful run to publish the release. The prepare job validates the input and
+   rejects an existing version tag before starting the native builds.
 3. Windows and Ubuntu 22.04 runners independently run application, packaging,
    release-contract, standalone-runtime and native tests, then build optimized
    installers. Linux installs GTK/WebKit 4.1/AppIndicator and bundling prerequisites;
@@ -73,15 +74,40 @@ ordinary pushes and tags do not publish releases.
    one `SHA256SUMS-<platform>.txt` per platform. They are also retained for 14 days
    as `desktop-windows-x64` / `desktop-linux-x64` workflow artifacts.
 5. Only after both platforms pass does the release job download all assets, require
-   all three installers and verify their hashes. It creates a new tag at the exact
-   built `github.sha`, then a release with the installers and checksums. Repository
+   all three installers and verify their hashes. It records `release-manifest.json`
+   containing the source commit, source version, selected version and asset hashes.
+   It creates the new tag at that source `github.sha`, then a release with the
+   installers, checksums and manifest. Repository
    write permission exists only in this final job; the normal `GITHUB_TOKEN` suffices.
 
-An existing version tag is rejected; use a new synchronized version for a new
-release. The workflow does not overwrite existing tags or release files. If an
+An existing version tag is rejected; enter a new version for a new release.
+The workflow does not overwrite existing tags or release files. If an
 API/upload failure occurs after tag creation, inspect that partial tag/release
 before retrying; a new run will not silently replace it. Concurrent runs for the
 same branch queue rather than cancel an active publication.
+
+### How a manual version is applied
+
+The selected version is applied identically in each runner's **build workspace**:
+root/desktop `package.json`, root/desktop npm lock entries, Tauri config, Cargo
+manifest/root lock entry and domain `APP_VERSION`. API and MCP report that domain
+version. Dependency versions are preserved. All application versions are checked
+again before collecting installers; selecting only a release title cannot create
+a setup with an older embedded version.
+
+This overlay does not commit or push version changes to the source branch. A tag's
+source files may therefore retain the source version: the manifest explicitly
+records both versions and whether an override was applied. To reproduce the
+metadata overlay after checking out that source commit, use the same value:
+
+```powershell
+$env:RELEASE_VERSION_INPUT = "0.2.0"
+node scripts/release-package.mjs prepare
+```
+
+`node scripts/release-package.mjs metadata` validates the currently checked-out
+versions without changing them. A blank `RELEASE_VERSION_INPUT` selects those
+versions. Neither command performs an automatic increment.
 
 Packages are unsigned and updates remain manual. The workflow definition and local
 checks are not evidence of a completed hosted Linux build or a clean installation.

@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { aiProposalSchema, aiRequestSchema, aiScopeSchema } from "../dist/packages/domain/src/ai.js";
+import { APP_VERSION } from "../dist/packages/domain/src/workspace.js";
 import { WorkspaceStore } from "../dist/packages/storage/src/store.js";
 import { AiService } from "../dist/services/local-api/src/ai.js";
 import { startApi } from "../dist/services/local-api/src/server.js";
@@ -751,7 +752,7 @@ test("official SDK stdio to the actual API scopes proposals and requires the hum
   const sibling = await imported(f, f.sibling), other = await imported(f, f.other);
   const grant = await mint(f, a), client = await sdkClient(f, grant);
   assert.notEqual(grant.token, f.api.token);
-  assert.deepEqual(client.getServerVersion(), { name: "atris-share", version: "0.1.0-preview.1" });
+  assert.deepEqual(client.getServerVersion(), { name: "atris-share", version: APP_VERSION });
   assert.deepEqual((await client.listTools()).tools.map(tool => tool.name), TOOLS);
   // Changing the desktop's current selection cannot redirect this fixed grant.
   f.store.setContext(f.other);

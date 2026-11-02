@@ -79,7 +79,9 @@ temiz kurulum kabulü Aşama 9'da; paketleme yayın izni değildir. [Zamanlayıc
 GitHub Actions **Desktop release → Run workflow**, Windows x64 için NSIS `.exe`,
 Linux x64 için `.deb` / `.AppImage` üretir. Varsayılan olarak taslak release oluşturur;
 iki platformun kontrolleri geçince kurulum dosyaları ve SHA-256 özetleri eklenir.
-Sürüm kaynak dosyalardan alınır; mevcut sürüm etiketi üzerine yazılmaz.
+**version** alanına `0.2.0` veya `0.2.0-beta.1` yazabilirsin; boş bırakırsan kaynak
+sürümü kullanılır. Otomatik sürüm artırma yapılmaz. Girilen sürüm derleme ortamındaki
+tüm uygulama sürüm alanlarına uygulanır; mevcut sürüm etiketi üzerine yazılmaz.
 [Manuel release rehberi](docs/PACKAGING.md#manual-github-release).
 
 ## Kullanım akışı

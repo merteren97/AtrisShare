@@ -9,12 +9,17 @@ const versionedInstaller = (name, version, extension) => {
   const stem = name.slice(0, -extension.length);
   return stem.endsWith(`_${version}`) || stem.includes(`_${version}_`);
 };
+function validateVersion(version) {
+  if (typeof version !== "string" || version.length > 100 ||
+      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version) ||
+      version.split("-").slice(1).join("-").split(".").some(part => /^0\d+$/.test(part))) throw new Error("Invalid release version; use SemVer such as 0.2.0 or 0.2.0-beta.1");
+  return version;
+}
 export async function releaseMetadata(root = repository) {
   const app = await json(join(root, "package.json"));
   const version = app.version;
-  if (app.name !== "atris-share" || typeof version !== "string" ||
-      !/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/.test(version) ||
-      version.split("-").slice(1).join("-").split(".").some(part => /^0\d+$/.test(part))) throw new Error("Invalid release version in package.json");
+  if (app.name !== "atris-share") throw new Error("Invalid release application");
+  validateVersion(version);
   const desktop = await json(join(root, "apps/desktop/package.json"));
   const tauri = await json(join(root, "apps/desktop/src-tauri/tauri.conf.json"));
   const lock = await json(join(root, "package-lock.json"));
@@ -31,6 +36,33 @@ export async function releaseMetadata(root = repository) {
     if (actual !== version) throw new Error(`Release version mismatch: ${name} must equal ${version}`);
   }
   return { version, tag: `v${version}`, prerelease: version.includes("-") };
+}
+/** A deterministic build-workspace overlay; never creates commits or changes a remote branch. */
+export async function applyReleaseVersion(root, requested = "") {
+  const current = await releaseMetadata(root);
+  if (typeof requested !== "string") throw new Error("Invalid release version input");
+  const version = requested.trim() ? validateVersion(requested.trim().replace(/^v/, "")) : current.version;
+  if (version !== current.version) {
+    const changes = [];
+    for (const path of ["package.json", "apps/desktop/package.json", "apps/desktop/src-tauri/tauri.conf.json", "package-lock.json"]) {
+      const value = await json(join(root, path)); value.version = version;
+      if (path === "package-lock.json") { value.packages[""].version = version; value.packages["apps/desktop"].version = version; }
+      changes.push([path, `${JSON.stringify(value, null, 2)}\n`]);
+    }
+    const cargoPath = "apps/desktop/src-tauri/Cargo.toml";
+    const cargo = await readFile(join(root, cargoPath), "utf8");
+    changes.push([cargoPath, cargo.replace(/(^\[package\][\s\S]*?^version\s*=\s*")([^"]+)(")/m, (_, prefix, old, suffix) => `${prefix}${version}${suffix}`)]);
+    const lockPath = "apps/desktop/src-tauri/Cargo.lock";
+    const lock = await readFile(join(root, lockPath), "utf8");
+    changes.push([lockPath, lock.split("[[package]]").map(block => /^name\s*=\s*"atris-share"\s*$/m.test(block)
+      ? block.replace(/(^version\s*=\s*")([^"]+)(")/m, (_, prefix, old, suffix) => `${prefix}${version}${suffix}`) : block).join("[[package]]")]);
+    const domainPath = "packages/domain/src/workspace.ts";
+    const domain = await readFile(join(root, domainPath), "utf8");
+    changes.push([domainPath, domain.replace(/(export const APP_VERSION = ")([^"]+)(")/, (_, prefix, old, suffix) => `${prefix}${version}${suffix}`)]);
+    // All source versions and input are validated before the first write.
+    for (const [path, text] of changes) await writeFile(join(root, path), text);
+  }
+  return { ...await releaseMetadata(root), source_version: current.version };
 }
 export async function collectReleaseAssets(root, platform) {
   if (!Object.hasOwn(formats, platform)) throw new Error("Unsupported release platform");
@@ -73,20 +105,48 @@ export async function verifyReleaseAssets(directory, version) {
       if (!actual.bytes || actual.sha256 !== match[1]) throw new Error(`Release checksum mismatch: ${filename}`);
     }
   }
-  if (JSON.stringify((await readdir(directory)).sort()) !== JSON.stringify(expected.sort())) throw new Error("Unexpected or missing release assets");
+  const actualNames = (await readdir(directory)).sort();
+  if (actualNames.includes("release-manifest.json")) {
+    const manifest = await json(join(directory, "release-manifest.json"));
+    validateVersion(manifest.sourceVersion);
+    if (manifest.schemaVersion !== 1 || manifest.version !== version || manifest.tag !== `v${version}` ||
+        manifest.prerelease !== version.includes("-") || !/^[a-f0-9]{40}$/.test(manifest.sourceCommit ?? "") ||
+        manifest.versionOverrideApplied !== (manifest.sourceVersion !== version) || !Array.isArray(manifest.files) ||
+        JSON.stringify(manifest.files.map(file => file.name).sort()) !== JSON.stringify([...expected].sort())) throw new Error("Invalid release provenance manifest");
+    for (const file of manifest.files) {
+      const actual = await fingerprint(join(directory, file.name));
+      if (actual.bytes !== file.bytes || actual.sha256 !== file.sha256) throw new Error(`Release provenance hash mismatch: ${file.name}`);
+    }
+    expected.push("release-manifest.json");
+  }
+  if (JSON.stringify(actualNames) !== JSON.stringify(expected.sort())) throw new Error("Unexpected or missing release assets");
   return expected;
 }
+export async function finalizeReleaseAssets(root, directory, sourceCommit, sourceVersion) {
+  if (!/^[a-f0-9]{40}$/.test(sourceCommit ?? "")) throw new Error("Invalid source commit");
+  validateVersion(sourceVersion);
+  const metadata = await releaseMetadata(root);
+  const files = await verifyReleaseAssets(directory, metadata.version);
+  const manifest = { schemaVersion: 1, ...metadata, sourceCommit, sourceVersion,
+    versionOverrideApplied: sourceVersion !== metadata.version,
+    files: await Promise.all(files.map(async name => ({ name, ...await fingerprint(join(directory, name)) }))) };
+  await writeFile(join(directory, "release-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
+  return manifest;
+}
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const metadata = await releaseMetadata();
-  if (process.argv[2] === "metadata") {
+  const command = process.argv[2];
+  const metadata = command === "prepare" ? await applyReleaseVersion(repository, process.env.RELEASE_VERSION_INPUT ?? "") : await releaseMetadata();
+  if (command === "metadata" || command === "prepare") {
     if (process.env.GITHUB_OUTPUT) await appendFile(process.env.GITHUB_OUTPUT, Object.entries(metadata).map(([key, value]) => `${key}=${value}\n`).join(""));
     console.log(JSON.stringify(metadata));
-  } else if (process.argv[2] === "collect") {
+  } else if (command === "collect") {
     const platform = process.argv[3];
     if (platform !== `${process.platform === "win32" ? "windows" : process.platform}-x64` || process.arch !== "x64") throw new Error("Release runner/platform mismatch");
     await verifyRuntime(join(repository, "apps/desktop/src-tauri/runtime"), { root: repository });
     console.log(JSON.stringify(await collectReleaseAssets(repository, platform)));
-  } else if (process.argv[2] === "verify" && process.argv[3]) {
+  } else if (command === "verify" && process.argv[3]) {
     console.log(JSON.stringify(await verifyReleaseAssets(resolve(process.argv[3]), metadata.version)));
-  } else throw new Error("Usage: node scripts/release-package.mjs metadata | collect <platform> | verify <asset-directory>");
+  } else if (command === "finalize" && process.argv[3]) {
+    console.log(JSON.stringify(await finalizeReleaseAssets(repository, resolve(process.argv[3]), process.env.GITHUB_SHA, process.env.SOURCE_VERSION)));
+  } else throw new Error("Usage: node scripts/release-package.mjs metadata | prepare | collect <platform> | verify <asset-directory> | finalize <asset-directory>");
 }

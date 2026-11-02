@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { APP_VERSION } from "../dist/packages/domain/src/workspace.js";
 
 const ENTRY = fileURLToPath(new URL("../dist/services/mcp-server/src/index.js", import.meta.url));
 const LIMIT = 1024 * 1024;
@@ -99,7 +100,7 @@ async function connect(t, fixture) {
 test("official SDK stdio handshake exposes only granted static tools and forwards scoped inspect/propose", async t => {
   const f = await fixture(t, { capabilities: { tools: ["media_inspect", "timeline_propose", "memory_read", "media_download", "publish"], includeMemory: false } });
   const client = await connect(t, f);
-  assert.deepEqual(client.getServerVersion(), { name: "atris-share", version: "0.1.0-preview.1" });
+  assert.deepEqual(client.getServerVersion(), { name: "atris-share", version: APP_VERSION });
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map(tool => tool.name), ["media_inspect", "timeline_propose"]);
   for (const tool of tools) assert.equal(tool.inputSchema.additionalProperties, false);

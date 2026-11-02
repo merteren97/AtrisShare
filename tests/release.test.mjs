@@ -3,7 +3,7 @@ import { copyFile, mkdtemp, mkdir, readFile, readdir, rm, writeFile } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { collectReleaseAssets, releaseMetadata, verifyReleaseAssets } from "../scripts/release-package.mjs";
+import { applyReleaseVersion, collectReleaseAssets, finalizeReleaseAssets, releaseMetadata, verifyReleaseAssets } from "../scripts/release-package.mjs";
 
 const version = "0.1.0-preview.1";
 async function fixture(t) {
@@ -21,10 +21,10 @@ async function fixture(t) {
   await writeFile(join(root, "packages/domain/src/workspace.ts"), `export const APP_VERSION = "${version}";\n`);
   return root;
 }
-async function installer(root, bundle, extension, prefix = "AtrisShare") {
+async function installer(root, bundle, extension, prefix = "AtrisShare", releaseVersion = version) {
   const directory = join(root, "apps/desktop/src-tauri/target/release/bundle", bundle);
   await mkdir(directory, { recursive: true });
-  const path = join(directory, `${prefix}_${version}${extension}`);
+  const path = join(directory, `${prefix}_${releaseVersion}${extension}`);
   await writeFile(path, `synthetic ${bundle} installer bytes`);
   return path;
 }
@@ -68,4 +68,37 @@ test("missing, duplicate, empty and stale installers cannot be collected as a su
   await writeFile(join(root, "apps/desktop/src-tauri/target/release/bundle/nsis", `AtrisShare_${version}0_x64-setup.exe`), "stale prerelease");
   await assert.rejects(collectReleaseAssets(root, "windows-x64"), /Unexpected release filename/);
   await assert.rejects(collectReleaseAssets(root, "unsupported"), /Unsupported/);
+});
+
+test("manual release version updates native/runtime/npm sources together without modifying dependency versions", async t => {
+  const root = await fixture(t);
+  const before = await readFile(join(root, "package.json"), "utf8");
+  assert.deepEqual(await applyReleaseVersion(root, ""), { version, tag: `v${version}`, prerelease: true, source_version: version });
+  assert.equal(await readFile(join(root, "package.json"), "utf8"), before);
+  for (const input of ["0.01.0", "1.0.0\nforged=true", "0.2.0-beta.01", "../../outside"]) {
+    await assert.rejects(applyReleaseVersion(root, input), /Invalid release version/);
+    assert.equal(await readFile(join(root, "package.json"), "utf8"), before, "invalid input must not partially change metadata");
+  }
+  assert.deepEqual(await applyReleaseVersion(root, " v0.2.0 "), { version: "0.2.0", tag: "v0.2.0", prerelease: false, source_version: version });
+  assert.deepEqual(await releaseMetadata(root), { version: "0.2.0", tag: "v0.2.0", prerelease: false });
+  const lock = await readFile(join(root, "apps/desktop/src-tauri/Cargo.lock"), "utf8");
+  assert.match(lock, /name = "other"\nversion = "1\.2\.3"/);
+  assert.deepEqual(await applyReleaseVersion(root, "0.3.0-beta.2"), { version: "0.3.0-beta.2", tag: "v0.3.0-beta.2", prerelease: true, source_version: "0.2.0" });
+});
+
+test("version overrides remain reproducible through the source commit/version and final asset manifest", async t => {
+  const root = await fixture(t), selected = "0.2.0";
+  await applyReleaseVersion(root, selected);
+  await installer(root, "nsis", ".exe", "AtrisShare", selected); await installer(root, "deb", ".deb", "AtrisShare", selected); await installer(root, "appimage", ".AppImage", "AtrisShare", selected);
+  const windows = await collectReleaseAssets(root, "windows-x64"), linux = await collectReleaseAssets(root, "linux-x64");
+  const combined = join(root, "combined"); await mkdir(combined);
+  for (const source of [windows.output, linux.output]) for (const name of await readdir(source)) await copyFile(join(source, name), join(combined, name));
+  await assert.rejects(finalizeReleaseAssets(root, combined, "not-a-commit", version), /source commit/);
+  const manifest = await finalizeReleaseAssets(root, combined, "a".repeat(40), version);
+  assert.equal(manifest.version, selected); assert.equal(manifest.sourceVersion, version); assert.equal(manifest.sourceCommit, "a".repeat(40));
+  assert.equal(manifest.versionOverrideApplied, true); assert.equal(manifest.files.length, 5);
+  assert.equal((await verifyReleaseAssets(combined, selected)).length, 6);
+  manifest.files[0].sha256 = "0".repeat(64);
+  await writeFile(join(combined, "release-manifest.json"), JSON.stringify(manifest));
+  await assert.rejects(verifyReleaseAssets(combined, selected), /provenance hash mismatch/);
 });

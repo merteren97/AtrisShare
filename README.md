@@ -77,8 +77,10 @@ does not authorize release. See [scheduling](docs/SCHEDULING.md),
 
 GitHub Actions **Desktop release → Run workflow** builds Windows x64 NSIS `.exe`
 and Linux x64 `.deb` / `.AppImage` installers. It defaults to a draft release and
-attaches installers plus SHA-256 checksums only after both platforms pass. Versions
-come from the checked-out source; existing version tags cannot be overwritten.
+attaches installers plus SHA-256 checksums only after both platforms pass. Enter
+**version** (for example `0.2.0` or `0.2.0-beta.1`), or leave it blank to use the
+source version. Versions are not automatically incremented. Manual versions update
+all build-workspace version sources; existing version tags cannot be overwritten.
 See [manual release instructions](docs/PACKAGING.md#manual-github-release).
 
 ## Workflow
