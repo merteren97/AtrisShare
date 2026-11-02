@@ -8,7 +8,9 @@ disables updater artifacts. Signing and an authenticated update design require a
 separate decision before claiming either. Creating an NSIS installer or a CI
 artifact is staging, not publishing or a release. Windows clean-machine install,
 upgrade/uninstall, native UI and all-feature/live-provider acceptance remain the
-final **Phase 9** gate. macOS/Linux native packages are not accepted support targets.
+final **Phase 9** gate. The manual release workflow targets Windows x64 and Linux
+x64 installers; Linux clean-machine/runtime acceptance remains unverified. macOS
+packaging is not enabled.
 
 An update should stop the old application, preserve its data directory and install
 the new application. Test migrations against a stopped-app backup before promising
@@ -48,6 +50,41 @@ claim installer extraction, clean installation, WebView2 setup, or upgrade accep
 
 The root `test`/`check` scripts do not automatically include `packaging.test.mjs`;
 CI calls it explicitly. `test:runtime` stages and exercises relocated Node/API/MCP.
+
+## Manual GitHub release
+
+`.github/workflows/release.yml` appears as **Desktop release** in GitHub Actions
+after the workflow is present on the default branch. It has only `workflow_dispatch`;
+ordinary pushes and tags do not publish releases.
+
+1. Keep the application version synchronized in root/desktop `package.json`,
+   `package-lock.json` (top-level, root and desktop entries), Tauri config,
+   Cargo manifest/lock and domain `APP_VERSION`. Run
+   `node scripts/release-package.mjs metadata` to check them. The tag is `v` plus
+   that version; prerelease versions such as `0.1.0-preview.1` are marked prerelease.
+2. Open **Actions → Desktop release → Run workflow**, select the desired source
+   branch, and leave **draft** checked to create a draft. Uncheck it only when you
+   intend the successful run to publish the release.
+3. Windows and Ubuntu 22.04 runners independently run application, packaging,
+   release-contract, standalone-runtime and native tests, then build optimized
+   installers. Linux installs GTK/WebKit 4.1/AppIndicator and bundling prerequisites;
+   AppImage tooling uses extraction mode instead of requiring a FUSE mount.
+4. The outputs are **Windows NSIS `.exe`**, **Linux `.deb` and `.AppImage`**, and
+   one `SHA256SUMS-<platform>.txt` per platform. They are also retained for 14 days
+   as `desktop-windows-x64` / `desktop-linux-x64` workflow artifacts.
+5. Only after both platforms pass does the release job download all assets, require
+   all three installers and verify their hashes. It creates a new tag at the exact
+   built `github.sha`, then a release with the installers and checksums. Repository
+   write permission exists only in this final job; the normal `GITHUB_TOKEN` suffices.
+
+An existing version tag is rejected; use a new synchronized version for a new
+release. The workflow does not overwrite existing tags or release files. If an
+API/upload failure occurs after tag creation, inspect that partial tag/release
+before retrying; a new run will not silently replace it. Concurrent runs for the
+same branch queue rather than cancel an active publication.
+
+Packages are unsigned and updates remain manual. The workflow definition and local
+checks are not evidence of a completed hosted Linux build or a clean installation.
 
 ## Fail-closed staging and resource inventory
 
@@ -92,6 +129,13 @@ runtime engineering evidence, not live-provider or installed-app acceptance.
   omissions use `.cargo_vcs_info.json` and the declared GitHub repository. Only license
   files at that immutable commit are used, with URL/commit/content hashes recorded.
   Unsupported provenance, unavailable network or unresolved texts fails staging.
+- `libappindicator-sys@0.9.0` also omits its repository field. Its reviewed mapping
+  to `tauri-apps/libappindicator-rs` requires the official registry source, exact
+  `Apache-2.0 OR MIT` declaration, archive VCS commit
+  `eafd1e3682a1247f595410266091e9684021cb6f` and `sys` package path. Both original
+  root licenses are fetched at that commit and recorded with content hashes. A
+  changed version/identity cannot inherit the mapping. This fixes Linux runtime
+  staging while retaining the complete-license requirement.
 - One reviewed exception is deliberately explicit: `react-remove-scroll-bar@2.3.8`
   omits its license and its published `gitHead` is unavailable. The collector binds
   the exact locked npm integrity to the author's later LICENSE-addition commit

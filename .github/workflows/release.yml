@@ -1,0 +1,141 @@
+name: Desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: "Create a draft release (uncheck to publish after both platforms pass)"
+        type: boolean
+        required: true
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-22.04
+    outputs:
+      version: ${{ steps.metadata.outputs.version }}
+      tag: ${{ steps.metadata.outputs.tag }}
+      prerelease: ${{ steps.metadata.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - name: Validate all application version sources
+        id: metadata
+        run: node scripts/release-package.mjs metadata
+      - name: Require a new release tag
+        env:
+          RELEASE_TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          existing="$(git ls-remote --tags origin "refs/tags/$RELEASE_TAG")"
+          if [[ -n "$existing" ]]; then
+            echo "::error::The version tag already exists. Update the application version before a new release."
+            exit 1
+          fi
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: prepare
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform: windows-x64
+            bundles: nsis
+          - os: ubuntu-22.04
+            platform: linux-x64
+            bundles: deb,appimage
+    runs-on: ${{ matrix.os }}
+    env:
+      # linuxdeploy's AppImage tools can run on hosted runners without a FUSE mount.
+      APPIMAGE_EXTRACT_AND_RUN: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Install Linux desktop and bundling dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential curl wget file patchelf libssl-dev librsvg2-dev \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+          key: release-${{ matrix.platform }}
+      - run: npm ci
+      - name: Check application and packaging contracts
+        run: npm run check
+      - run: npm run test:packaging
+      - run: npm run test:release
+      - name: Exercise standalone API and MCP runtime
+        run: npm run test:runtime
+      - name: Check native behavior
+        run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - name: Build release installers with fresh verified runtime resources
+        run: npm run tauri -w @atris-share/desktop -- build --ci --no-sign --bundles ${{ matrix.bundles }} -- --locked
+      - name: Verify runtime and collect installers with SHA-256 checksums
+        run: node scripts/release-package.mjs collect ${{ matrix.platform }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: desktop-${{ matrix.platform }}
+          path: release-artifacts/${{ matrix.platform }}/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Create GitHub release
+    needs: [prepare, build]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.tag }}
+      RELEASE_VERSION: ${{ needs.prepare.outputs.version }}
+      PRERELEASE: ${{ needs.prepare.outputs.prerelease }}
+      DRAFT_RELEASE: ${{ inputs.draft }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: desktop-*
+          merge-multiple: true
+          path: release-artifacts/combined
+      - name: Require both platforms and verify every installer checksum
+        run: node scripts/release-package.mjs verify release-artifacts/combined
+      - name: Create release at the exact built commit and attach installers
+        shell: bash
+        run: |
+          flags=()
+          if [[ "$DRAFT_RELEASE" == "true" ]]; then flags+=(--draft); fi
+          if [[ "$PRERELEASE" == "true" ]]; then flags+=(--prerelease); fi
+          gh api --method POST "repos/$GH_REPO/git/refs" \
+            -f "ref=refs/tags/$RELEASE_TAG" -f "sha=$GITHUB_SHA"
+          gh release create "$RELEASE_TAG" release-artifacts/combined/* \
+            --repo "$GH_REPO" --verify-tag \
+            --title "AtrisShare $RELEASE_VERSION" --generate-notes "${flags[@]}"

@@ -73,6 +73,14 @@ available. Live-provider and clean-install acceptance remains Phase 9; packaging
 does not authorize release. See [scheduling](docs/SCHEDULING.md),
 [social setup](docs/SOCIAL.md), [data](docs/DATA.md) and [packaging](docs/PACKAGING.md).
 
+## Desktop installers
+
+GitHub Actions **Desktop release → Run workflow** builds Windows x64 NSIS `.exe`
+and Linux x64 `.deb` / `.AppImage` installers. It defaults to a draft release and
+attaches installers plus SHA-256 checksums only after both platforms pass. Versions
+come from the checked-out source; existing version tags cannot be overwritten.
+See [manual release instructions](docs/PACKAGING.md#manual-github-release).
+
 ## Workflow
 
 1. Connect one or more accounts and select the exact channel/profile destination.

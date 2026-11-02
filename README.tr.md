@@ -74,6 +74,14 @@ JSON dışa aktarma ve hash doğrulamalı paket/lisans hazırlığı vardır. Ca
 temiz kurulum kabulü Aşama 9'da; paketleme yayın izni değildir. [Zamanlayıcı](docs/SCHEDULING.md),
 [sosyal kurulum](docs/SOCIAL.md), [veri](docs/DATA.md), [paketleme](docs/PACKAGING.md).
 
+## Masaüstü kurulum paketleri
+
+GitHub Actions **Desktop release → Run workflow**, Windows x64 için NSIS `.exe`,
+Linux x64 için `.deb` / `.AppImage` üretir. Varsayılan olarak taslak release oluşturur;
+iki platformun kontrolleri geçince kurulum dosyaları ve SHA-256 özetleri eklenir.
+Sürüm kaynak dosyalardan alınır; mevcut sürüm etiketi üzerine yazılmaz.
+[Manuel release rehberi](docs/PACKAGING.md#manual-github-release).
+
 ## Kullanım akışı
 
 1. Bir veya birden fazla hesabı bağla, işlem yapılacak kanal/profili açıkça seç.

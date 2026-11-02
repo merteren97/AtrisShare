@@ -12,6 +12,7 @@ out/
 .next/
 .turbo/
 target/
+/release-artifacts/
 *.tsbuildinfo
 coverage/
 .cache/

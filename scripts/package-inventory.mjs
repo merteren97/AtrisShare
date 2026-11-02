@@ -10,7 +10,7 @@ const exec = promisify(execFile);
 export const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const sources = ["package.json", "package-lock.json", "apps/desktop/package.json",
   "apps/desktop/src-tauri/Cargo.toml", "apps/desktop/src-tauri/Cargo.lock", "apps/desktop/src-tauri/tauri.conf.json",
-  "scripts/stage-runtime.mjs", "scripts/package-inventory.mjs", "LICENSE", "NOTICE"];
+  "scripts/stage-runtime.mjs", "scripts/package-inventory.mjs", "scripts/release-package.mjs", "LICENSE", "NOTICE"];
 export const requiredFiles = ["api.mjs", "mcp.mjs", "NODE-LICENSE.txt", "ZOD-LICENSE.txt", "LICENSE.txt", "NOTICE.txt",
   "API-THIRD-PARTY-NOTICES.txt", "MCP-THIRD-PARTY-NOTICES.txt", "FRONTEND-THIRD-PARTY-NOTICES.txt",
   "RUST-THIRD-PARTY-NOTICES.txt", "dependency-inventory.json"];
@@ -28,6 +28,15 @@ const npmLicenseExceptions = {
     commit: "7301c160fda44cb8cf2b9fdfde61efad35736196",
     sha256: "a79aae0c0f21990d9d963bb3c5a79cdcea9a46f8523ba55c58d7fe776b6ebc84",
     resolution: "Reviewed later upstream LICENSE (2025-05-21); npm 2.3.8 (2024-12-15) omitted it and its published gitHead is unavailable. Distribution review required."
+  }
+};
+// This published crate omits both repository metadata and license files. Its
+// archive's .cargo_vcs_info.json identifies the original upstream snapshot.
+// Never infer a repository from an arbitrary crate name or a newer release.
+const cargoRepositoryFallbacks = {
+  "libappindicator-sys@0.9.0": {
+    repository: "tauri-apps/libappindicator-rs", commit: "eafd1e3682a1247f595410266091e9684021cb6f",
+    path: "sys", license: "Apache-2.0 OR MIT"
   }
 };
 function within(root, path) {
@@ -146,15 +155,22 @@ async function upstreamText(url, fetcher) {
 // immutable commits recorded by Cargo are eligible; never use HEAD or a generic
 // SPDX template (which would lose the actual copyright/attribution).
 export async function pinnedCargoLicenses(pkg, fetcher = fetch, cache = new Map()) {
-  const repository = githubRepository(pkg.repository);
-  if (!repository || !pkg.source?.startsWith("registry+")) return [];
+  let repository = githubRepository(pkg.repository);
+  const fallback = !pkg.repository && cargoRepositoryFallbacks[`${pkg.name}@${pkg.version}`];
+  if ((!repository && !fallback) || !pkg.source?.startsWith("registry+")) return [];
   let vcs;
   try { vcs = await json(join(dirname(pkg.manifest_path), ".cargo_vcs_info.json")); }
   catch (error) { if (error.code === "ENOENT") return []; throw error; }
   const commit = vcs.git?.sha1;
   if (!/^[a-f0-9]{40}$/.test(commit) || typeof vcs.path_in_vcs !== "string" ||
-      vcs.path_in_vcs.split("/").some(part => part === ".." || part === ".")) throw new Error(`Invalid Cargo provenance: ${pkg.name}`);
-  return githubLicenseTexts(repository, commit, vcs.path_in_vcs, fetcher, cache);
+       vcs.path_in_vcs.split("/").some(part => part === ".." || part === ".")) throw new Error(`Invalid Cargo provenance: ${pkg.name}`);
+  if (fallback) {
+    if (pkg.source !== "registry+https://github.com/rust-lang/crates.io-index" || pkg.license !== fallback.license ||
+        commit !== fallback.commit || vcs.path_in_vcs !== fallback.path) throw new Error(`Reviewed Cargo repository metadata no longer matches: ${pkg.name}`);
+    repository = fallback.repository;
+  }
+  const texts = await githubLicenseTexts(repository, commit, vcs.path_in_vcs, fetcher, cache);
+  return fallback ? texts.map(text => ({ ...text, resolution: "Published crate omitted repository and license files; resolved from its original .cargo_vcs_info.json commit in the reviewed upstream repository." })) : texts;
 }
 function githubRepository(value) {
   return /^https:\/\/github\.com\/([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec((typeof value === "string" ? value : value?.url ?? "").replace(/^git\+/, ""))?.[1];

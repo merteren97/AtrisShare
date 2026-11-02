@@ -160,3 +160,32 @@ test("reviewed npm omissions cannot silently follow changed integrity or changed
   assert.equal(fetched, false);
   await assert.rejects(npmLicenseTexts(manifest, { integrity: "sha512-9r+yi9+mgU33AKcj6IbT9oRCO78WriSj6t/cF8DWBZJ9aOGPOTEDvdUDz1FwKim7QXWwmHqtdHnRJfhAxEG46Q==" }, parent, fetcher), /license hash mismatch/);
 });
+
+test("Linux libappindicator-sys archive omission resolves original licenses without skipping inventory", async t => {
+  const { parent } = await fixture(t);
+  const commit = "eafd1e3682a1247f595410266091e9684021cb6f";
+  await writeFile(join(parent, ".cargo_vcs_info.json"), JSON.stringify({ git: { sha1: commit }, path_in_vcs: "sys" }));
+  const pkg = { name: "libappindicator-sys", version: "0.9.0", license: "Apache-2.0 OR MIT", repository: null,
+    source: "registry+https://github.com/rust-lang/crates.io-index", manifest_path: join(parent, "Cargo.toml") };
+  const requests = [];
+  const fetcher = async url => {
+    requests.push(url);
+    return new Response(url.includes("api.github.com") ? JSON.stringify({ truncated: false, tree: [
+      { path: "LICENSE-MIT", type: "blob", mode: "100644" }, { path: "LICENSE-APACHE", type: "blob", mode: "100644" },
+      { path: "unrelated/LICENSE", type: "blob", mode: "100644" }
+    ] }) : `Copyright original upstream fixture\n${"Full license text. ".repeat(20)}`);
+  };
+  const texts = await pinnedCargoLicenses(pkg, fetcher);
+  assert.deepEqual(texts.map(t => t.file), ["LICENSE-APACHE", "LICENSE-MIT"]);
+  assert.ok(texts.every(t => t.commit === commit && t.sourceUrl.includes(`tauri-apps/libappindicator-rs/${commit}/`) && /original/.test(t.resolution)));
+  assert.equal(requests.length, 3);
+  for (const change of [{ license: "MIT" }, { source: "registry+untrusted" }]) {
+    await assert.rejects(pinnedCargoLicenses({ ...pkg, ...change }, fetcher), /metadata no longer matches/);
+  }
+  for (const vcs of [{ git: { sha1: "b".repeat(40) }, path_in_vcs: "sys" }, { git: { sha1: commit }, path_in_vcs: "another-package" }]) {
+    await writeFile(join(parent, ".cargo_vcs_info.json"), JSON.stringify(vcs));
+    await assert.rejects(pinnedCargoLicenses(pkg, fetcher), /metadata no longer matches/);
+  }
+  assert.deepEqual(await pinnedCargoLicenses({ ...pkg, version: "0.9.1" }, fetcher), []);
+  assert.equal(requests.length, 3, "changed identities cannot fetch or silently inherit the reviewed mapping");
+});

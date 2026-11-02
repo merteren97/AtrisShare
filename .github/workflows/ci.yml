@@ -22,6 +22,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: npm ci
       - run: node --test tests/packaging.test.mjs
+      - run: npm run test:release
       - run: npm run check
       - run: npm run test:runtime
       - run: node scripts/package-inventory.mjs --verify apps/desktop/src-tauri/runtime
