@@ -30,6 +30,7 @@ import { createScheduleSchema, scheduleActionSchema, updateScheduleSchema } from
 import twitterText from "twitter-text";
 import { MediaTools, mediaToolsSchema } from "./media-tools.js";
 import { TranscriptionEngine } from "../../../packages/media-engine/src/transcription.js";
+import { ManagedMediaTools } from "./managed-media-tools.js";
 
 export interface ApiOptions {
   dataDirectory?: string;
@@ -47,6 +48,8 @@ export interface ApiOptions {
   clips?: ClipOptions;
   social?: Omit<SocialOptions, "mediaPath">;
   socialText?: SocialTextOptions;
+  /** Product entry points enable background provisioning; embedded/test APIs stay offline. */
+  managedMediaTools?: boolean;
 }
 export const NATIVE_ORIGINS = ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
 const MAX_BODY = 32 * 1024;
@@ -90,7 +93,9 @@ export async function startApi(options: ApiOptions = {}) {
   const youtube = new YouTubeService(store, credentialVault, options.youtube);
   await youtube.loadLocalClient();
   const mediaTools = new MediaTools(directory);
-  const toolPaths = await mediaTools.load();
+  const savedToolPaths = await mediaTools.load();
+  const managedTools = options.managedMediaTools ? new ManagedMediaTools(directory) : undefined;
+  const toolPaths = managedTools ? await managedTools.initialize(savedToolPaths) : savedToolPaths;
   const studio = new StudioService(store, youtube, credentialVault, directory, { ...options.studio, engine: { ...toolPaths, ...options.studio?.engine } });
   const transcription = new TranscriptionService(store, studio, options.transcription ?? { engine: new TranscriptionEngine(toolPaths) });
   const ai = new AiService(store, studio, { ...options.ai, transcription });
@@ -170,6 +175,9 @@ export async function startApi(options: ApiOptions = {}) {
         send(response, 200, { ...mediaTools.view(), tools: await studio.engine.status() });
       } else if (route === "POST /api/settings/media-tools") {
         send(response, 200, { ...await mediaTools.save(mediaToolsSchema.parse(await body(request))), tools: await studio.engine.status() });
+      } else if (route === "POST /api/media/setup") {
+        if (managedTools) void managedTools.retry();
+        send(response, 202, managedTools?.view() ?? { state: "unsupported" });
       } else if (route === "GET /api/youtube") {
         send(response, 200, youtube.setup());
       } else if (route === "POST /api/youtube/config") {
@@ -190,7 +198,7 @@ export async function startApi(options: ApiOptions = {}) {
         const input = youtubeAccountSchema.extend({ revoke: z.boolean() }).strict().parse(await body(request));
         send(response, 200, await youtube.disconnect({ accountId: input.accountId, destinationId: input.destinationId }, input.revoke));
       } else if (route === "GET /api/studio") {
-        send(response, 200, await studio.snapshot(queryContext(url)));
+        send(response, 200, { ...await studio.snapshot(queryContext(url)), processing: managedTools?.view() });
       } else if (route === "GET /api/ai/setup") {
         send(response, 200, await ai.setup());
       } else if (route === "GET /api/ai/runs") {
@@ -340,7 +348,7 @@ export async function startApi(options: ApiOptions = {}) {
   server.headersTimeout = 10_000;
   function close(): Promise<void> {
     scheduler.close();
-    closePromise ??= clips.close().then(() => Promise.all([ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()])).then(() => new Promise<void>((resolve, reject) => {
+    closePromise ??= Promise.all([managedTools?.close(), clips.close()]).then(() => Promise.all([ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()])).then(() => new Promise<void>((resolve, reject) => {
       server.close(error => { store.close(); if (error) reject(error); else resolve(); });
       server.closeIdleConnections();
     }));
@@ -356,6 +364,6 @@ export async function startApi(options: ApiOptions = {}) {
         resolve();
       });
     });
-  } catch (error) { scheduler.close(); await Promise.all([clips.close(), ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()]); store.close(); throw error; }
+  } catch (error) { scheduler.close(); await Promise.all([managedTools?.close(), clips.close(), ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()]); store.close(); throw error; }
   return { origin, token, close, server };
 }

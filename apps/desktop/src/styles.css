@@ -210,17 +210,24 @@ main[data-page="accounts"] > .social-panel { margin-top: 28px; }
 .revoke-option input { margin-top: 4px; }
 .revoke-option small { display: block; color: var(--muted); line-height: 1.8; margin-top: 6px; }
 .version { font-size: 11px; color: var(--faint); white-space: nowrap; }
-.settings-panel { margin-bottom: 20px; padding: 22px 25px; }
+.settings-page { width: 100%; max-width: 1040px; margin-inline: auto; }
+.settings-stack { display: grid; gap: 24px; }
+.settings-stack > .panel { min-width: 0; padding: 28px; margin: 0; }
+.settings-panel { padding: 28px; }
 .settings-section-title { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; color: var(--muted); }
 .settings-section-title h2 { color: var(--text); }
 .settings-section-title > .badge { margin-left: auto; }
-.media-tools-form { margin-top: 20px; }
+.settings-action-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; }
+.settings-action-row > p { flex: 1; margin: 0; max-width: 62ch; }
+.settings-action-row > .button { flex-shrink: 0; white-space: normal; text-align: left; }
 .setting-row { display: flex; justify-content: space-between; align-items: center; gap: 22px; border-top: 1px solid var(--line); padding: 18px 0; font-size: 12px; }
 .setting-row:last-child { padding-bottom: 0; }
-.setting-row p { color: var(--faint); line-height: 1.7; margin-top: 6px; font-size: 11px; max-width: 370px; }
+.setting-row p { color: var(--muted); line-height: 1.75; margin-top: 7px; font-size: 12px; max-width: 56ch; }
+.setting-row > div { min-width: 0; }
 .setting-row select { min-width: 155px; background: var(--bg); font-size: 12px; }
 .setting-row code { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; text-align: right; min-width: 0; }
-.vault-status { color: var(--muted); display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.vault-status { color: var(--muted); display: flex; align-items: center; gap: 6px; font-size: 12px; flex-shrink: 0; }
+.settings-panel .section-note { font-size: 12px; color: var(--muted); }
 .section-note { color: var(--faint); line-height: 1.8; font-size: 11px; margin-top: 12px; }
 .audit-list { list-style: none; padding: 0; margin: 16px 0 0; }
 .audit-list li { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); font-size: 11px; }
@@ -260,6 +267,7 @@ main[data-page="accounts"] > .social-panel { margin-top: 28px; }
   .vault-status { max-width: 200px; line-height: 1.7; }
 }
 @media (max-width: 850px) {
+  .settings-action-row { align-items: flex-start; flex-direction: column; gap: 18px; }
   .sidebar { width: 66px; padding: 24px 8px 12px; align-items: center; }
   .sidebar-label, .nav-item > span, .nav-item small, .hub-link { display: none; }
   .sidebar nav { width: 100%; margin-top: 35px; }
@@ -303,7 +311,10 @@ main[data-page="accounts"] > .social-panel { margin-top: 28px; }
   .empty-state { padding: 33px 18px; }
   .inline-empty { flex-wrap: wrap; padding: 17px; }
   .inline-empty .text-button { margin-left: 31px; }
-  .settings-panel { padding: 19px; }
+  .settings-panel, .settings-stack > .panel { padding: 20px; }
+  .settings-stack { gap: 18px; }
+  .settings-page .setting-row { gap: 14px; }
+  .settings-page .setting-row > div { flex-basis: 100%; }
   .setting-row { align-items: flex-start; flex-wrap: wrap; }
   .setting-row select { min-width: 120px; }
   .setting-row.data-row { flex-direction: column; gap: 10px; }

@@ -94,21 +94,24 @@ export function NativeSettings({ language }: { language: "tr" | "en" }) {
     <header className="native-settings__heading"><Monitor size={18} aria-hidden="true" /><div><h2 id={`${id}-title`}>{t.title}</h2><p>{t.description}</p></div></header>
     {loading ? <p className="native-settings__status" role="status"><LoaderCircle size={15} className="spinning" aria-hidden="true" />{t.loading}</p> : <>
       {settings && !native && <p className="native-settings__help">{t.web}</p>}
-      <label className="native-settings__toggle"><input type="checkbox" checked={settings?.closeToTray ?? false}
+      <label className="native-settings__toggle"><span>{t.background}</span><input type="checkbox" role="switch" checked={settings?.closeToTray ?? false}
         disabled={!native || busy || (!settings?.trayAvailable && !settings?.closeToTray)} aria-describedby={`${id}-background-help`}
-        onChange={event => { void save(event.target.checked); }} /><span>{t.background}</span></label>
+        onChange={event => { void save(event.target.checked); }} /></label>
       <p id={`${id}-background-help`} className="native-settings__help">{t.backgroundHelp}</p>
       {native && <p className="native-settings__status" role="status">{!settings?.trayAvailable ? t.trayMissing : settings.closeToTray ? t.backgroundOn : t.foreground}</p>}
       {settings?.settingsError && <div className="native-settings__recovery"><p>{t.invalidSaved}</p><button type="button" className="button secondary" disabled={busy} onClick={() => { void save(false); }}>{t.repair}</button></div>}
       {error && <div className="native-settings__error" role="alert"><p>{t[error]}</p>{error === "loadFailed" && <button type="button" className="button secondary" disabled={busy} onClick={() => { void load(); }}>{t.retry}</button>}</div>}
-      <div className="native-settings__save" role="status" aria-live="polite">{busy ? <><LoaderCircle size={14} className="spinning" aria-hidden="true" />{t.saving}</> : saved ? t.saved : null}</div>
-      <div className="native-settings__notifications"><h3><Bell size={16} aria-hidden="true" />{t.notifications}</h3>
-        <p className="native-settings__permission">{t.permission}: <strong>{permissionLabel}</strong></p>
-        <p className="native-settings__help">{t.notificationHelp}</p><p className="native-settings__help">{t.boundary}</p>
-        {permissionError && <p className="native-settings__error" role="alert">{t.permissionFailed}</p>}
-        {native && <div className="native-settings__actions">{permission !== "granted" && <button type="button" className="button secondary" disabled={busy} onClick={() => { void requestPermission(); }}>{t.allow}</button>}
-          <button type="button" className="button secondary" disabled={busy} onClick={() => { void load(); }}>{t.check}</button></div>}
-      </div>
-    </>}
-  </section></>;
+       {(busy || saved) && <div className="native-settings__save" role="status" aria-live="polite">{busy ? <><LoaderCircle size={14} className="spinning" aria-hidden="true" />{t.saving}</> : t.saved}</div>}
+     </>}
+   </section>
+   <section className="panel native-settings" aria-labelledby={`${id}-notifications`}>
+       <header className="native-settings__heading"><Bell size={18} aria-hidden="true" /><div><h2 id={`${id}-notifications`}>{t.notifications}</h2><p>{t.notificationHelp}</p></div></header>
+       <div className="native-settings__notification-row">
+         <p className="native-settings__permission" role="status">{t.permission}: <strong>{loading ? t.loading : permissionLabel}</strong></p>
+         {native && <div className="native-settings__actions">{permission !== "granted" && <button type="button" className="button secondary" disabled={busy || loading} onClick={() => { void requestPermission(); }}>{t.allow}</button>}
+           <button type="button" className="button secondary" disabled={busy || loading} onClick={() => { void load(); }}>{t.check}</button></div>}
+       </div>
+       <p className="native-settings__help">{t.boundary}</p>
+       {permissionError && <p className="native-settings__error" role="alert">{t.permissionFailed}</p>}
+   </section></>;
 }

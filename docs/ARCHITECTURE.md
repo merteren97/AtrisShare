@@ -118,15 +118,20 @@ proxy retains source time. The player shows stored bytes, not live unsaved edits
 Proxy and proposal-preview artifacts are not publication artifacts.
 Successful exports and publications add scoped history notes.
 
-User-selected executable paths in `media-tools.json` load before media/transcription
-service construction. Settings verifies named local binaries, saves atomically and
-requires a full restart, preserving running jobs. Empty fields fall back to
-`ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or `PATH`.
+Legacy executable paths in `media-tools.json` load before media/transcription service
+construction, with environment/PATH fallbacks. Product entry points enable
+`ManagedMediaTools`: working tools are reused; missing Windows/Linux x64 tools are
+downloaded from pinned release assets with SHA-256, size and deadline limits.
+Full license/source notices are retained alongside verified binaries. Corrupt cache
+entries are removed before consumers receive paths; downloads use unique temporary
+files and atomic rename. Engine paths stay stable, so availability polls discover
+completed preparation without restarting or replacing a running service. Offline
+failures retry every minute; runtime shutdown aborts provisioning. The normal UI
+has no executable-path configuration or tool-availability diagnostics.
 Argument arrays, restricted environment/protocols, bounded process output
 and timeouts avoid a shell or network demuxing. Export uses H.264 `libx264`, AAC
 when audio exists, and static caption text files with `drawtext`. No FFmpeg/FFprobe
-binary is bundled. Temporary GPL-enabled verification tools are not distribution
-artifacts; redistribution remains a separate build/codec licensing decision.
+binary is bundled in the installer; downloaded tools remain in the user's data directory.
 
 ### Local speech transcription (Phase 4)
 

@@ -150,7 +150,7 @@ function TranscriptionSession({ artifact, context, language, onChanged }: Transc
     <p className="studio-help">{t("transcriptLocalHelp")}</p>
     <div className="transcription-setup"><div><strong>{t("transcriptSetup")}</strong><span>{t(loading ? "checking" : setup?.available ? "available" : "unavailable")}</span></div>
       <button type="button" className="icon-button" disabled={disabled} onClick={() => { void load(); }} title={t("transcriptRefresh")} aria-label={t("transcriptRefresh")}><RefreshCw size={14} className={loading ? "spinning" : ""} /></button></div>
-    {setup && <ul className="transcription-tools">{(["ffmpeg", "whisper", "model"] as const).map(tool => <li key={tool}>{t(tool === "ffmpeg" ? "transcriptFfmpeg" : tool === "whisper" ? "transcriptWhisper" : "transcriptModel")}: {t(setup[tool] ? "available" : "unavailable")}</li>)}</ul>}
+    {setup && <ul className="transcription-tools">{(["whisper", "model"] as const).map(tool => <li key={tool}>{t(tool === "whisper" ? "transcriptWhisper" : "transcriptModel")}: {t(setup[tool] ? "available" : "unavailable")}</li>)}</ul>}
     {!loading && !setup?.available && <p className="studio-help">{t("transcriptSetupHelp")}</p>}
     {!matchingScope && <p className="studio-inline-error" role="alert">{t("errorScope")}</p>}
     {!hasProbe ? <p className="studio-callout">{t("probeRequired")}</p> : !artifact.probe?.hasAudio && <p className="studio-callout">{t("transcriptNoAudio")}</p>}

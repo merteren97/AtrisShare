@@ -187,11 +187,12 @@ complete installed-system or installer-toolchain SBOM is made.
 
 ## External tools remain external
 
-FFmpeg/FFprobe, whisper.cpp and GGML speech models, OpenCode and its provider
-credentials are not copied into staging or installed automatically. Existing
-PATH/absolute-path configuration and unavailable-tool recovery apply. FFmpeg exports
-use H.264/libx264, AAC and drawtext; any future binary/codec bundling needs a separate
-build/license/source/patent review. Temporary verification binaries are not release
-resources. Model licenses and external AI/provider terms are separate from AtrisShare's
+FFmpeg/FFprobe are not copied into staging. On Windows/Linux x64 the desktop reuses
+working local tools or downloads pinned `eugeneware/ffmpeg-static` `b6.1.1` binaries
+into the user's workspace data directory. Executables and full upstream license/source
+notices have pinned SHA-256 digests; interrupted/failed downloads retry in the background.
+FFmpeg exports use H.264/libx264, AAC and drawtext. whisper.cpp, GGML speech models,
+OpenCode and its provider credentials are neither bundled nor installed automatically.
+Temporary verification binaries are not release resources. Model licenses and external AI/provider terms are separate from AtrisShare's
 Apache license. Do not put tool caches, credentials, user databases or media into
 `runtime/`; the strict inventory rejects additional files.

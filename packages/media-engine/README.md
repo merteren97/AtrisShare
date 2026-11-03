@@ -20,7 +20,9 @@ artifact metadata, revisioned edits, transcripts and ownership leases live in st
 
 ## External tools
 
-Install FFmpeg and FFprobe separately. `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE`
+The desktop prepares missing Windows/Linux x64 FFmpeg/FFprobe tools automatically
+through the local API's verified background installer. Standalone engine callers can
+install tools separately. `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE`
 select executables; otherwise `ffmpeg` / `ffprobe` resolve on `PATH`. No binary is
 bundled. Availability checks do not guarantee codec/filter support: export requires
 H.264 `libx264`, AAC when audio exists and `drawtext` for captions.

@@ -81,23 +81,24 @@ pinned Node executable. `MCP-THIRD-PARTY-NOTICES.txt` retains full bundled-depen
 license texts; Node/Zod licenses and linked legal comments are included. Packaged
 MCP launch does not require an external Node installation.
 
-Media inspection/export requires separately installed FFmpeg and FFprobe, selected
-in **Settings → Video tools** (`media-tools.json` in the workspace data directory).
-Saved paths activate on the next full restart and override `ATRIS_SHARE_FFMPEG` /
-`ATRIS_SHARE_FFPROBE` or `PATH`; empty paths restore those fallbacks. Explicit paths
-must point to the named local executables and are checked with `-version` before saving.
-They also configure transcription's FFmpeg on restart. Export uses
-H.264 (`libx264`), AAC for audio and `drawtext` for captions. No media binary is
-bundled; temporary GPL-enabled verification builds are not distribution artifacts.
-Missing tools are reported as unavailable. Structurally valid imports can be stored
-without FFprobe metadata, but editing needs a probed duration and available tools.
+Desktop/dev entry points automatically prepare FFmpeg/FFprobe on Windows/Linux x64.
+Working legacy `media-tools.json`, environment and PATH tools are reused. Missing
+tools download from pinned `eugeneware/ffmpeg-static` `b6.1.1` assets into
+`tools/ffmpeg-b6.1.1-<platform>-<arch>` under the workspace data directory.
+Full license/source notices and executable bytes are SHA-256 verified; partial
+downloads never activate. Verified caches work offline, failures retry every minute,
+and shutdown aborts downloads. Stable paths are shared by editing/transcription;
+the next availability poll activates them without restarting. No video-tool form
+or diagnostic badges appear in the normal UI. Embedded/test API instances remain
+network-free unless `managedMediaTools` is enabled. Export uses H.264 (`libx264`),
+AAC and `drawtext`. Desktop imports wait until processing is ready.
 
 For local transcription, install compatible whisper.cpp `whisper-cli` and a GGML
 model separately. `ATRIS_SHARE_WHISPER_CLI` selects the native executable (otherwise
 `whisper-cli` on `PATH`); `ATRIS_SHARE_WHISPER_MODEL` requires an absolute local model
 path. FFmpeg extracts 16 kHz mono 16-bit PCM. Maximum source/audio duration is two
 hours; language and ordered timestamps are validated, and actual source bytes are
-hash-checked before/after. No tool/model is bundled or automatically downloaded.
+hash-checked before/after. No speech-recognition executable/model is automatically downloaded.
 See [engine details](../packages/media-engine/README.md).
 
 ## Storage and vault
@@ -201,6 +202,7 @@ Every workspace request uses the desktop session bearer. JSON mutation bodies re
 | POST | `/api/accounts` | `{displayName, platform: "local"}` creates a real local workspace; social identities require OAuth |
 | GET | `/api/settings/media-tools` | Saved paths, active tool status and restart-needed flag |
 | POST | `/api/settings/media-tools` | `{ffmpegPath, ffprobePath}`; verify local executables and save for next startup |
+| POST | `/api/media/setup` | Retry background media preparation; no user-provided URLs, paths or commands |
 | PUT | `/api/context` | `{accountId, projectId}` validates and persists selection |
 | GET | `/api/projects?accountId=…` | List only this account's projects |
 | POST | `/api/projects` | `{accountId, name, description}` |

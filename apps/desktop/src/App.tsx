@@ -13,7 +13,6 @@ import { SocialPanel } from "./SocialPanel";
 import { QueuePanel } from "./QueuePanel";
 import { NativeSettings } from "./NativeSettings";
 import { MemoryExport } from "./MemoryExport";
-import { MediaToolSettings } from "./MediaToolSettings";
 import { AppUpdater } from "./AppUpdater";
 import { notifyDue, onNativeOpenQueue } from "./native-desktop";
 import type { Occurrence } from "../../../packages/domain/src/scheduling.js";
@@ -63,7 +62,6 @@ export function App() {
   const [dueReviews, setDueReviews] = useState<Occurrence[]>([]);
   const dueRef = useRef<Occurrence[]>([]);
   const returnFocus = useRef<HTMLElement | null>(null);
-  const focusTools = useRef(false);
   const ws = useWorkspace();
   const t = (key: TextKey) => dictionaries[language][key];
   const state = ws.snapshot;
@@ -101,7 +99,6 @@ export function App() {
   useEffect(() => { document.documentElement.lang = language; remember("atris-share-language", language); }, [language]);
   useEffect(() => {
     document.getElementById("main-content")?.scrollTo({ top: 0 });
-    if (page === "settings" && focusTools.current) { focusTools.current = false; requestAnimationFrame(() => document.getElementById("video-tools")?.scrollIntoView({ block: "start" })); }
   }, [page]);
   useEffect(() => {
     const abort = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
@@ -216,7 +213,7 @@ export function App() {
         {!!dueReviews.length && <div className="queue-reminder" role="status"><CalendarClock size={17} /><span>{language === "tr" ? `${dueReviews.length} zamanlanmış içerik onay bekliyor.` : `${dueReviews.length} scheduled items await approval.`}</span><button className="text-button" onClick={() => openQueue.current()}>{t("queue")}<ChevronRight size={14} /></button></div>}
         {!!ws.error && <div className="error-banner" role="alert"><CircleAlert size={17} /><span>{errorText(ws.error)}</span><button className="text-button" onClick={() => { void ws.refresh(true); }}>{t("retry")}</button></div>}
         {ws.loading && !state ? <div className="loading-state" role="status"><LoaderCircle className="spinning" />{t("loading")}</div> : state && <>
-          {page === "studio" && (context && account && context.projectId ? <Studio key={`${context.accountId}:${context.projectId}`} context={context} account={account} language={language} errorText={errorText} initialTab={studioTab} projectName={project?.name ?? ""} onToolSettings={() => { focusTools.current = true; setPage("settings"); }} /> : <>
+          {page === "studio" && (context && account && context.projectId ? <Studio key={`${context.accountId}:${context.projectId}`} context={context} account={account} language={language} errorText={errorText} initialTab={studioTab} projectName={project?.name ?? ""} /> : <>
             <div className="page-heading"><div><p className="eyebrow">{t("studioLabel")}</p><h1>{t("editorStartTitle")}</h1><p>{t("editorStartHelp")}</p></div></div>
             <section className="editor-launch panel"><span className="editor-launch-icon"><Scissors size={28} strokeWidth={1.5} /></span><div><h2>{t("startEditing")}</h2><p>{t("localProjectHelp")}</p></div><button className="button primary" onClick={() => open({ type: "project" })}><Plus size={16} />{t("newProject")}</button></section>
             {!!state.projects.length && <section className="section"><div className="section-heading"><h2>{t("recentProjects")}</h2><span className="count">{state.projects.length}</span></div><div className="project-grid">{state.projects.map(item => <button className="project-card" key={item.id} onClick={() => { void ws.chooseContext({ accountId: item.accountId, projectId: item.id }); setStudioTab("media"); }}><span className="project-symbol"><Clapperboard size={20} /></span><span className="project-card-copy"><strong>{item.name}</strong><span>{item.description || account?.displayName}</span></span><span className="project-card-bottom">{t("open")}<ArrowUpRight size={14} /></span></button>)}</div></section>}
@@ -253,21 +250,22 @@ export function App() {
           {page === "accounts" && <Accounts language={language} accounts={state.accounts} selectedId={account?.id} vaultAvailable={state.vault.available} loading={ws.loading}
             t={t} errorText={errorText} refresh={ws.refresh} choose={accountId => { void ws.chooseContext({ accountId, projectId: null }); }} />}
 
-          {page === "settings" && <>
+          {page === "settings" && <div className="settings-page">
             <div className="page-heading"><div><p className="eyebrow">{t("settings")}</p><h1>{t("settingsTitle")}</h1><p>{t("settingsDescription")}</p></div><span className="version">v{state.version}</span></div>
-            <section className="settings-panel panel"><div className="settings-section-title"><Settings2 size={18} /><h2>{t("appearance")}</h2></div>
+            <div className="settings-stack">
+            <section className="settings-panel panel"><header className="native-settings__heading"><Settings2 size={18} aria-hidden="true" /><div><h2>{t("appearance")}</h2><p>{t("appearanceHelp")}</p></div></header>
               <div className="setting-row"><label htmlFor="theme">{t("theme")}</label><select id="theme" value={theme} onChange={event => setTheme(event.target.value)}><option value="dark">{t("dark")}</option><option value="light">{t("light")}</option></select></div>
               <div className="setting-row"><label htmlFor="language">{t("language")}</label><select id="language" value={language} onChange={event => setLanguage(event.target.value as Language)}><option value="tr">Türkçe</option><option value="en">English</option></select></div></section>
             <NativeSettings language={language} />
-            <MediaToolSettings language={language} />
-            <section className="settings-panel panel"><div className="settings-section-title"><HardDrive size={18} /><h2>{t("storage")}</h2></div>
+            <section className="settings-panel panel"><header className="native-settings__heading"><HardDrive size={18} aria-hidden="true" /><div><h2>{t("storage")}</h2><p>{t("storageHelp")}</p></div></header>
               <div className="setting-row data-row"><span>{t("dataDirectory")}</span><code>{state.dataDirectory}</code></div>
               <div className="setting-row"><span>{t("database")}</span><span>SQLite · WAL</span></div>
               <div className="setting-row"><div><span>{t("vault")}</span><p>{t("vaultDescription")}</p></div><span className="vault-status"><ShieldCheck size={15} />{state.vault.available ? t("vaultReady") : t("vaultUnavailable")}</span></div>
               <div className="setting-row"><div><span>{t("session")}</span><p>{t("sessionDescription")}</p></div><span className="badge positive">{t("local")}</span></div></section>
-            <section className="settings-panel panel"><div className="settings-section-title"><NotebookPen size={18} /><h2>{t("audit")}</h2></div><p className="section-note">{t("auditDescription")}</p>
+            <section className="settings-panel panel"><header className="native-settings__heading"><NotebookPen size={18} aria-hidden="true" /><div><h2>{t("audit")}</h2><p>{t("auditDescription")}</p></div></header>
               {ws.audit.length ? <ul className="audit-list">{ws.audit.map(event => <li key={event.id}><span className="audit-dot" /><span>{event.action in dictionaries[language] ? t(event.action as TextKey) : event.action}</span><time dateTime={event.recordedAt}>{date(event.recordedAt)}</time></li>)}</ul> : <p className="section-note">{t("noAudit")}</p>}</section>
-          </>}
+            </div>
+          </div>}
         </>}
       </main>
       <footer className="statusbar"><span><span className={`status-dot ${ws.error ? "offline-dot" : ""}`} />{ws.error ? t("connectionError") : ws.loading ? t("loading") : t("connected")}</span><span>{account?.displayName ?? "AtrisShare"}{context && <> / {scopeLabel(context)}</>}</span></footer>

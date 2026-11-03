@@ -27,9 +27,9 @@ export interface StudioPublication {
   approvalExpiresAt: string | null; progress: number; videoId: string | null; error: string | null; createdAt: string;
 }
 export interface StudioRender { id: string; sourceId: string; kind?: "proxy" | "export" | "preview"; state: "running" | "succeeded" | "failed" | "cancelled"; progress: number; error: string | null; artifactId: string | null }
-interface StudioSnapshot { artifacts: StudioArtifact[]; publications: StudioPublication[]; tools: { available: boolean; ffmpeg: boolean; ffprobe: boolean }; renders: StudioRender[] }
+interface StudioSnapshot { artifacts: StudioArtifact[]; publications: StudioPublication[]; tools: { available: boolean; ffmpeg: boolean; ffprobe: boolean }; renders: StudioRender[]; processing?: { state: "preparing" | "ready" | "retrying" | "unsupported" } }
 interface Catalog { items: { id: string; title: string; publishedAt: string; thumbnail: string | null }[]; nextPageToken: string | null }
-export interface StudioProps { context: WorkspaceContext; account: WorkspaceAccount; language: StudioLanguage; errorText: (e: unknown) => string; initialTab?: "media" | "publishing"; projectName?: string; onToolSettings?: () => void }
+export interface StudioProps { context: WorkspaceContext; account: WorkspaceAccount; language: StudioLanguage; errorText: (e: unknown) => string; initialTab?: "media" | "publishing"; projectName?: string }
 
 const BLOB_LIMIT = 256 * 1024 * 1024;
 const pendingPublication = (item: StudioPublication) => item.state === "uploading" || item.state === "processing";
@@ -54,7 +54,7 @@ export function Studio(props: StudioProps) {
   return <StudioWorkspace key={`${props.context.accountId}:${props.context.projectId}:${props.account.destinationId}`} {...props} />;
 }
 
-function StudioWorkspace({ context, account, language, errorText, initialTab = "media", projectName, onToolSettings }: StudioProps) {
+function StudioWorkspace({ context, account, language, errorText, initialTab = "media", projectName }: StudioProps) {
   const t = studioText(language);
   const translateError = (error: unknown) => studioError(error, t, errorText);
   const [snapshot, setSnapshot] = useState<StudioSnapshot | null>(null);
@@ -121,10 +121,10 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
       for (const timer of downloadTimers.current) clearTimeout(timer);
     };
   }, [refresh]);
-  const pending = !!snapshot && (snapshot.publications.some(pendingPublication) || snapshot.renders.some(item => item.state === "running"));
+  const pending = !!snapshot && ((!snapshot.tools.available && !!snapshot.processing && snapshot.processing.state !== "unsupported") || snapshot.publications.some(pendingPublication) || snapshot.renders.some(item => item.state === "running"));
   useEffect(() => {
     if (!pending || busy) return;
-    const timer = setTimeout(() => { void refresh(); }, loadError ? 6000 : 2000);
+    const timer = setTimeout(() => { void refresh(); }, loadError || snapshot?.processing?.state === "retrying" ? 6000 : 2000);
     return () => clearTimeout(timer);
   }, [pending, busy, snapshot, loadError, refresh]);
 
@@ -145,7 +145,7 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
   }
   function selectArtifact(id: string) { setSelectedId(id); setTab("media"); }
   function importFiles(sources: ImportSource[]) {
-    if (!sources.length || !snapshot || busyRef.current) return;
+    if (!sources.length || !snapshot?.tools.available || busyRef.current) return;
     window.dispatchEvent(new Event("atris-share:work-started"));
     void act(async signal => {
       setImporting(true);
@@ -226,14 +226,14 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
 
   return <div className="studio" data-update-blocked={busy || pending}
     onDragEnter={event => { if (!event.dataTransfer.types.includes("Files")) return; event.preventDefault(); dropDepth.current++; setDragging(true); }}
-    onDragOver={event => { if (!event.dataTransfer.types.includes("Files")) return; event.preventDefault(); event.dataTransfer.dropEffect = busy || !snapshot ? "none" : "copy"; }}
+    onDragOver={event => { if (!event.dataTransfer.types.includes("Files")) return; event.preventDefault(); event.dataTransfer.dropEffect = busy || !tools?.available ? "none" : "copy"; }}
     onDragLeave={event => { event.preventDefault(); if (--dropDepth.current <= 0) { dropDepth.current = 0; setDragging(false); } }}
     onDrop={event => { event.preventDefault(); dropDepth.current = 0; setDragging(false); importFiles(Array.from(event.dataTransfer.files)); }}>
-    {dragging && <div className="studio-drop-overlay" role="status"><div className="studio-drop-card"><span className="studio-drop-icon"><Upload size={32} /></span><strong>{t(busy || !snapshot ? "dropBusy" : "dropTitle")}</strong><p>{t("dropHelp")}</p></div></div>}
+    {dragging && <div className="studio-drop-overlay" role="status"><div className="studio-drop-card"><span className="studio-drop-icon"><Upload size={32} /></span><strong>{t(!tools?.available ? "toolsMissing" : busy ? "dropBusy" : "dropTitle")}</strong><p>{t("dropHelp")}</p></div></div>}
     <header className="studio-heading">
       <div><p className="eyebrow">{t("studio")}</p><h1>{projectName ?? t("studioTitle")}</h1></div>
       <div className="studio-heading-actions"><span className="studio-count">{snapshot ? snapshot.artifacts.length : "—"} {t(snapshot?.artifacts.length === 1 ? "mediaCountOne" : "mediaCount")}</span>
-        <button className="button primary" disabled={busy || !snapshot} onClick={() => input.current?.click()}>{importing ? <LoaderCircle size={16} className="spinning" /> : <Plus size={16} />}{t(importing ? "importing" : "import")}</button>
+        <button className="button primary" disabled={busy || !tools?.available} onClick={() => input.current?.click()}>{importing ? <LoaderCircle size={16} className="spinning" /> : <Plus size={16} />}{t(importing ? "importing" : "import")}</button>
         <input ref={input} className="studio-file-input" type="file" multiple accept=".mp4,.mov,.webm,.mkv" aria-label={t("import")} onChange={event => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; importFiles(files); }} />
       </div>
     </header>
@@ -251,7 +251,7 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
       <ul>{imports.map((item, index) => <li key={index} data-state={item.state}>{item.state === "importing" ? <LoaderCircle size={14} className="spinning" /> : item.state === "imported" ? <Check size={14} /> : item.state === "failed" ? <CircleAlert size={14} /> : <FileVideo size={14} />}<span title={item.name}>{item.name}</span><small>{item.state === "failed" ? translateError(item.error) : t(item.state)}</small></li>)}</ul>
     </section>}
     {!snapshot ? !loadError && <div className="loading-state" role="status"><LoaderCircle className="spinning" />{t("loading")}</div> : <>
-      {!snapshot.tools.available && <div className="studio-callout studio-tools-callout"><div><strong>{t("toolsMissing")}</strong><p>{t("toolsHelp")}</p></div>{onToolSettings && <button className="button secondary" onClick={onToolSettings}>{t("toolSettings")}</button>}</div>}
+      {!snapshot.tools.available && <div className="studio-callout studio-tools-callout" role="status"><div><strong>{t(snapshot.processing?.state === "retrying" ? "processingRetry" : snapshot.processing?.state === "unsupported" ? "processingUnavailable" : "toolsMissing")}</strong><p>{t(snapshot.processing?.state === "unsupported" ? "processingUnavailableHelp" : snapshot.processing?.state === "retrying" ? "processingRetryHelp" : "toolsHelp")}</p></div>{snapshot.processing?.state === "retrying" && <button className="button secondary" disabled={busy} onClick={() => { void act(async signal => { await request("/api/media/setup", "POST", {}, signal); await refresh(); }); }}>{t("retry")}</button>}</div>}
       <section role="tabpanel" id={`${uniqueId}-panel-media`} aria-labelledby={`${uniqueId}-media`} hidden={tab !== "media"}>
         <div className="studio-modebar"><div className="studio-segmented" role="tablist" aria-label={t("studioTitle")}>
           {(["edit", "clips", "assistant", "publish"] as const).map(name => { const Icon = name === "edit" ? Scissors : name === "clips" ? Film : name === "assistant" ? Sparkles : Upload; return <button key={name} role="tab" aria-selected={inspector === name} id={`${uniqueId}-${name}`} aria-controls={`${uniqueId}-inspector-${name}`} tabIndex={inspector === name ? 0 : -1}
@@ -275,7 +275,7 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
                 <button className="icon-button" aria-label={t("download")} title={t("download")} disabled={busy || selected.bytes > BLOB_LIMIT} onClick={() => download(selected)}><ArrowDownToLine size={17} /></button></div>
               <details className="studio-file-details"><summary>{t("hash")}</summary><code>{selected.sha256}</code></details>
               {snapshot.renders.some(item => item.sourceId === selected.id && item.kind !== "preview") && <details className="studio-render-details" open={snapshot.renders.some(item => item.sourceId === selected.id && item.kind !== "preview" && item.state === "running") || undefined}><summary>{t("renderJobs")} <span className="count">{snapshot.renders.filter(item => item.sourceId === selected.id && item.kind !== "preview").length}</span></summary><RenderList renders={snapshot.renders.filter(item => item.sourceId === selected.id && item.kind !== "preview")} artifacts={snapshot.artifacts} t={t} busy={busy} errorText={translateError} open={selectArtifact} cancel={item => { void act(async signal => { const value = await request<StudioRender>(`/api/renders/${encodeURIComponent(item.id)}/cancel`, "POST", { context: scope }, signal); if (!signal.aborted) updateRender(value); }); }} /></details>}
-            </> : <div className="studio-preview-empty"><div className="studio-empty-frame"><Clapperboard size={38} strokeWidth={1.2} /></div><h2>{t(snapshot.artifacts.length ? "selectMedia" : "emptyLibrary")}</h2><p>{t(snapshot.artifacts.length ? "selectMediaHelp" : "emptyLibraryHelp")}</p>{!snapshot.artifacts.length && <><button className="button secondary" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} />{t("import")}</button><small className="studio-drop-hint">{t("dropHint")}</small></>}</div>}
+            </> : <div className="studio-preview-empty"><div className="studio-empty-frame"><Clapperboard size={38} strokeWidth={1.2} /></div><h2>{t(snapshot.artifacts.length ? "selectMedia" : "emptyLibrary")}</h2><p>{t(snapshot.artifacts.length ? "selectMediaHelp" : "emptyLibraryHelp")}</p>{!snapshot.artifacts.length && <><button className="button secondary" disabled={busy || !tools?.available} onClick={() => input.current?.click()}><Upload size={15} />{t("import")}</button><small className="studio-drop-hint">{t("dropHint")}</small></>}</div>}
           </div>
           <aside className="studio-inspector">{selected ? <>
             <div role="tabpanel" id={`${uniqueId}-inspector-publish`} aria-labelledby={`${uniqueId}-publish`} hidden={inspector !== "publish"}><PublishForm key={selected.id} artifact={selected} account={account} t={t} busy={busy} connected={connected} submit={fields => {
@@ -288,7 +288,7 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
             <div role="tabpanel" id={`${uniqueId}-inspector-clips`} aria-labelledby={`${uniqueId}-clips`} hidden={inspector !== "clips"}>{inspector === "clips" && <ClipPanel key={selected.id} artifact={selected} context={scope} account={account} language={language} onSeek={seekSource} onChanged={() => { void refresh(); }} />}</div>
           </> : <p className="studio-inspector-empty">{t("selectMediaHelp")}</p>}</aside>
         </div>
-        {tools && <div className="studio-footnote"><span><ShieldCheck size={13} />{t("sourceSafe")}</span><span>{t("ffmpeg")}: {t(tools.ffmpeg ? "available" : "unavailable")} · {t("ffprobe")}: {t(tools.ffprobe ? "available" : "unavailable")}</span></div>}
+        <div className="studio-footnote"><span><ShieldCheck size={13} />{t("sourceSafe")}</span></div>
       </section>
       <section role="tabpanel" id={`${uniqueId}-panel-publishing`} aria-labelledby={`${uniqueId}-publishing`} hidden={tab !== "publishing"}>
         {!snapshot.publications.length ? <div className="studio-panel empty-state"><div className="empty-icon"><Upload size={24} /></div><h2>{t("noPublications")}</h2><p>{t("noPublicationsHelp")}</p><button className="button secondary" onClick={() => setTab("media")}>{t("media")}</button></div>

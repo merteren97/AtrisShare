@@ -178,17 +178,20 @@ ve paketleme için sabitlenen Node 22 çalışma zamanını kurar.
 Node 22'nin dahili SQLite API'si upstream'de deneysel işaretlidir;
 ayrıca native SQLite eklentisi derlemeye gerek yoktur.
 
-Medya inceleme/dışa aktarma için **harici FFmpeg ve FFprobe** kullanılır.
-Kurulu araçların dosya yollarını **Ayarlar → Video araçları** bölümünden kaydet;
-uygulamadan tamamen çıkıp yeniden aç. Kayıtlı yollar `ATRIS_SHARE_FFMPEG` /
-`ATRIS_SHARE_FFPROBE` ve `PATH` ayarından önceliklidir; boş alanlar bu yedekleri kullanır.
-İkili medya aracı paketlenmez.
+Medya inceleme/dışa aktarma Windows/Linux x64 üzerinde arka planda otomatik hazırlanır.
+Çalışan mevcut FFmpeg/FFprobe kurulumları kullanılır; eksikler sabit
+`eugeneware/ffmpeg-static` `b6.1.1` sürümünden uygulama veri klasörüne indirilir.
+SHA-256 doğrulaması yapılır, tam lisans/kaynak bildirimleri saklanır. İlk indirme
+internet gerektirir; doğrulanmış araçlar sonraki açılışlarda çevrimdışı çalışır.
+Başarısız hazırlık otomatik yeniden denenir. Dosya yolu ayarı veya uygulamayı
+yeniden başlatma gerekmez. Eski kayıtlı yollar, `ATRIS_SHARE_FFMPEG` /
+`ATRIS_SHARE_FFPROBE` ve `PATH` desteği korunur.
 Dışa aktarma H.264 (`libx264`), ses için AAC, altyazı için `drawtext` gerektirir.
 İçe aktarma sınırı **2 GiB**; desteklenen içerik kendi kendine yeterli MP4 ailesi
 (`.mp4`/`.mov`) veya WebM'dir. `.mkv` yalnızca WebM içeriyorsa kabul edilir; genel
 Matroska desteği yoktur. Oturum doğrulamalı Blob ön izleme/indirme **256 MiB** ile
-sınırlıdır; oynatma WebView codec desteğine bağlıdır. FFprobe yoksa geçerli dosyalar
-inceleme bilgisi olmadan saklanabilir; düzenleme süre bilgisi ve kullanılabilir araçlar gerektirir.
+sınırlıdır; oynatma WebView codec desteğine bağlıdır. Masaüstünde içe aktarma video
+işleme hazır olduğunda açılır; düzenleme süre bilgisi ve kullanılabilir araçlar gerektirir.
 
 Yerel transkripsiyon için harici **whisper.cpp `whisper-cli`** ve uyumlu GGML model
 kullanılır: `ATRIS_SHARE_WHISPER_CLI` yürütülebiliri seçer (yoksa `PATH` üzerindeki

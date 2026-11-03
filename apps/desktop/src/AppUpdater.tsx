@@ -82,7 +82,8 @@ export function AppUpdater({ language }: { language: "tr" | "en" }) {
 
 export function UpdateSettings({ language }: { language: "tr" | "en" }) {
   return <section className="panel native-settings"><header className="native-settings__heading"><Download size={18} /><div><h2>{language === "tr" ? "Uygulama güncellemeleri" : "Application updates"}</h2><p>AtrisShare {APP_VERSION}</p></div></header>
-    <p className="native-settings__help">{language === "tr" ? "GitHub’daki yeni kararlı sürümler otomatik indirilir. Uygulama kullanılmıyorken kurulur; çalışırken yeniden başlatma size bırakılır." : "New stable GitHub releases download automatically. Installation runs when the app is unused; an active session lets you choose when to restart."}</p>
+    <div className="settings-action-row"><p className="native-settings__help">{language === "tr" ? "GitHub’daki yeni kararlı sürümler otomatik indirilir. Uygulama kullanılmıyorken kurulur; çalışırken yeniden başlatma size bırakılır." : "New stable GitHub releases download automatically. Installation runs when the app is unused; an active session lets you choose when to restart."}</p>
     <button type="button" className="button secondary" disabled={!isTauri()} onClick={() => window.dispatchEvent(new Event("atris-share:check-update"))}><RefreshCw size={14} />{language === "tr" ? "Güncellemeleri kontrol et" : "Check for updates"}</button>
+    </div>
   </section>;
 }

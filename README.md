@@ -177,16 +177,19 @@ prerequisites, and on Windows WebView2 plus Microsoft C++ Build Tools.
 Node 22's built-in SQLite API is marked experimental upstream; no separately
 compiled SQLite addon is needed.
 
-Media inspection/export uses **external FFmpeg and FFprobe**. Save their installed
-file paths in **Settings → Video tools**, then fully quit and reopen the app.
-Saved paths take precedence over `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` or
-`PATH`; empty fields use those fallbacks. No media-tool binary is bundled.
+Media inspection/export is prepared automatically in the background on Windows/Linux
+x64. Working existing FFmpeg/FFprobe installations are reused; missing tools download
+from the pinned `eugeneware/ffmpeg-static` `b6.1.1` release into the workspace data
+directory, with SHA-256 verification and full license/source notices. The first
+download needs internet; verified cached tools work offline. Failed preparation
+retries automatically. No path settings or app restart are needed. Legacy saved
+paths and `ATRIS_SHARE_FFMPEG` / `ATRIS_SHARE_FFPROBE` / `PATH` remain supported.
 Export requires H.264 (`libx264`), AAC for audio and `drawtext` for captions.
 Imports accept up to **2 GiB** of self-contained MP4-family (`.mp4`/`.mov`) or WebM
 content. `.mkv` is accepted only when the content is WebM, not general Matroska.
 Authenticated Blob preview/download is limited to **256 MiB** and playback depends
-on WebView codec support. Without FFprobe, valid imports can be stored without
-probe metadata; editing requires probed duration and available tools.
+on WebView codec support. The desktop enables imports once video processing is ready;
+editing requires probed duration and available tools.
 
 Local transcription uses an external **whisper.cpp `whisper-cli`** and compatible
 GGML model: `ATRIS_SHARE_WHISPER_CLI` selects the executable (otherwise `whisper-cli`
