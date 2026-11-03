@@ -114,6 +114,18 @@ test("AI sees bounded opted-in excerpts, validates ranked IDs and records select
   const bad = await f.done(await f.start({ ...OPTIONS, model: "fixture/ranker", includeTranscript: true }));
   assert.equal(bad.state, "failed"); assert.equal(bad.error, "clip_invalid_ranking"); assert.deepEqual(bad.candidates, []);
 });
+test("AI clip discovery preserves catalog/version failures and reserves missing-model errors for verified catalogs", async t => {
+  for (const [setup, expected] of [
+    [{ available: false, models: ["fixture/ranker"], error: "ai_catalog_refresh_failed" }, "ai_catalog_refresh_failed"],
+    [{ available: false, version: "2.0.0", models: [], error: "ai_version_unsupported" }, "ai_version_unsupported"],
+    [{ available: false, models: [], error: null }, "ai_unavailable"],
+    [{ available: true, models: [], error: null }, "ai_model_unavailable"]
+  ]) await t.test(expected, async t => {
+    const f = await fixture(t, { bridge: { async discover() { return setup; }, async rankClips() { assert.fail("failed discovery must not rank"); } } });
+    const run = await f.done(await f.start({ ...OPTIONS, model: "fixture/ranker", includeTranscript: true }));
+    assert.equal(run.state, "failed"); assert.equal(run.error, expected); assert.deepEqual(run.candidates, []);
+  });
+});
 test("durable cross-runtime cancellation rejects late output; expired owner projects interrupted", async t => {
   const entered = gate(), release = gate();
   const f = await fixture(t); f.studio.engine.analyze = async () => { entered.resolve(); await release.promise; return { scenes: [], silences: [] }; };

@@ -14,7 +14,8 @@ The port adapts AtrisAgent runtime-boundary patterns without sibling dependencie
   `ATRIS_SHARE_OPENCODE` can select an absolute native executable (Windows: `.exe`).
   Relative paths, npm shims and shell scripts are rejected.
 - Only **1.19.5** has verified isolation semantics and is currently accepted.
-  Other versions fail closed with `ai_configuration_unsafe`.
+  Other versions fail closed with `ai_version_unsupported`; a valid detected version
+  remains visible separately from effective-configuration errors.
 - The child retains the official CLI auth-store **path** (`XDG_DATA_HOME` or the
   normal `~/.local/share` base); AtrisShare never reads or copies credentials.
   CLI login/auth remains CLI-owned, separate from social OAuth.
@@ -26,6 +27,28 @@ The port adapts AtrisAgent runtime-boundary patterns without sibling dependencie
 - Child output/time are bounded; cancellation kills the owned process tree and
   awaits close before cleanup. Temporary state, including the CLI transcript,
   is removed on completion, failure or cancellation. Calls never resume a CLI session.
+
+## Model catalog refresh
+
+The desktop runtime shares a bridge configured with `catalogDirectory` under its
+own data directory across video, clips and text assistance. Product launch starts
+discovery in the background; runtime/workspace readiness does not wait for it.
+`GET /api/ai/setup?refresh=1` and the panel refresh actions bypass the setup TTL.
+The social text setup route forwards its existing `refresh=1` flag to the same port.
+
+Configured discovery refreshes a missing/expired catalog (one-hour TTL) through
+the official `models --refresh --pure`. OpenCode can swallow download failures,
+so the bridge also validates the newly-created isolated cache file and enumerates
+models from its pinned raw snapshot before atomically publishing it. Catalogs are
+bounded and keyed by executable/version. They contain public model metadata, not
+credentials. A failed refresh retains last-known IDs/timestamp as `catalog.state:
+stale` with `ai_catalog_refresh_failed`; it does not claim a successful update.
+
+Inference uses a per-operation `OPENCODE_MODELS_PATH` copy of the verified snapshot,
+not the CLI's bundled fallback. It does not fetch models or widen config/plugin/tool
+permissions. A removed model cannot silently redirect generation. Independent port
+callers should configure `catalogDirectory` and discover before generating; explicit
+refresh without a directory retains only an in-memory snapshot.
 
 ## Requests and review
 

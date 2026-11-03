@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { OpenCodeTextBridge, type SocialOneShotPort } from "../../../packages/ai-bridge/src/social-text.js";
+import { openCodeVersionSchema } from "../../../packages/ai-bridge/src/opencode.js";
 import { socialProviderSchema, socialTextCancelSchema, socialTextRequestSchema,
   type SocialTextRequest, type SocialTextSetup, type SocialTextSuggestion } from "../../../packages/domain/src/social.js";
 import type { WorkspaceStore } from "../../../packages/storage/src/store.js";
@@ -10,11 +11,12 @@ type StorePort = Pick<WorkspaceStore, "resolveContext" | "listAccounts" | "listM
 export interface SocialTextOptions { bridge?: SocialOneShotPort; now?: () => number }
 type Pending = { input: SocialTextRequest; abort: AbortController; promise: Promise<SocialTextSuggestion> };
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/u;
-const DISCOVERY = z.object({ available: z.boolean(), version: z.string().max(64).regex(/^\d+\.\d+\.\d+(?:[-+][A-Za-z0-9.-]+)?$/u).nullable(), models: z.array(z.string().max(384).regex(MODEL)).max(2000),
-  auth: z.literal("cli-managed"), error: z.string().max(100).nullable() }).strict();
+const DISCOVERY = z.object({ available: z.boolean(), version: openCodeVersionSchema.nullable(), models: z.array(z.string().max(384).regex(MODEL)).max(10000),
+  auth: z.literal("cli-managed"), error: z.string().max(100).nullable(),
+  catalog: z.object({ state: z.enum(["current", "stale"]), refreshedAt: z.string().datetime().nullable() }).strict().optional() }).strict();
 const OUTPUT = z.object({ text: z.string().trim().min(1).max(2000), summary: z.string().trim().min(1).max(600),
   sessionId: z.string().regex(/^ses_[A-Za-z0-9_-]{1,200}$/u).nullable() }).strict();
-const BRIDGE_ERRORS = new Set(["ai_unavailable", "ai_configuration_unsafe", "ai_model_unavailable", "ai_protocol_error", "ai_output_limit", "ai_timeout", "ai_cancelled", "ai_process_failed", "ai_cleanup_failed", "ai_invalid_input", "ai_invalid_executable", "ai_invalid_timeout"]);
+const BRIDGE_ERRORS = new Set(["ai_unavailable", "ai_configuration_unsafe", "ai_version_unsupported", "ai_catalog_refresh_failed", "ai_model_unavailable", "ai_protocol_error", "ai_output_limit", "ai_timeout", "ai_cancelled", "ai_process_failed", "ai_cleanup_failed", "ai_invalid_input", "ai_invalid_executable", "ai_invalid_timeout"]);
 const SERVICE_ERRORS = new Set(["social_ai_busy", "social_ai_scope_changed", "social_ai_input_limit", "social_ai_request_active", "social_ai_request_not_found",
   ...[...BRIDGE_ERRORS].map(code => `social_${code}`)]);
 const digest = (text: string) => createHash("sha256").update(text).digest("hex");
@@ -36,6 +38,7 @@ export class SocialTextService {
   private readonly active = new Map<string, Pending>();
   private readonly operations = new Set<Promise<unknown>>();
   private cached: { setup: SocialTextSetup; until: number } | null = null;
+  private discoveryGeneration = 0;
   private closePromise: Promise<void> | null = null;
   constructor(private readonly store: StorePort, options: SocialTextOptions = {}) {
     this.bridge = new OpenCodeTextBridge(options.bridge); this.clock = options.now ?? Date.now;
@@ -45,15 +48,18 @@ export class SocialTextService {
   private async discovery(signal: AbortSignal, refresh: boolean): Promise<SocialTextSetup> {
     this.ready(); signal.throwIfAborted();
     if (!refresh && this.cached && this.cached.until > this.clock()) return structuredClone(this.cached.setup);
+    const generation = ++this.discoveryGeneration;
     const bounded = AbortSignal.any([signal, this.shutdown.signal, AbortSignal.timeout(30_000)]);
-    const parsed = DISCOVERY.safeParse(await this.bridge.discover(bounded));
+    const parsed = DISCOVERY.safeParse(await this.bridge.discover(bounded, { refresh }));
     this.ready(); bounded.throwIfAborted();
     if (!parsed.success) throw new WorkspaceError(502, "social_ai_protocol_error");
     const v = parsed.data, available = v.available && v.models.length > 0 && v.error === null;
-    const setup: SocialTextSetup = { available, version: v.version, models: v.available ? [...new Set(v.models)] : [], auth: "cli-managed",
+    const setup: SocialTextSetup = { available, version: v.version, models: v.available || v.catalog?.state === "stale" ? [...new Set(v.models)] : [], auth: "cli-managed",
+      ...(v.catalog ? { catalog: v.catalog } : {}),
       error: available ? null : v.error && BRIDGE_ERRORS.has(v.error) ? `social_${v.error}` : v.available ? "social_ai_model_unavailable" : "social_ai_unavailable",
       maxTextChars: 10000, maxInstructionChars: 2000, maxOutputChars: 2000, memoryScope: "target-project-confirmed-only" };
-    this.cached = { setup, until: this.clock() + (available ? 30_000 : 5000) }; return structuredClone(setup);
+    if (generation === this.discoveryGeneration) this.cached = { setup, until: this.clock() + (available ? 30_000 : 5000) };
+    return structuredClone(setup);
   }
   setup(signal?: AbortSignal, refresh = false): Promise<SocialTextSetup> {
     this.capacity();

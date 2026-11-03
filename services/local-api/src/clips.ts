@@ -74,7 +74,8 @@ export class ClipService {
       if (!pool.length) throw new WorkspaceError(409, "clip_no_candidates");
       if (run.options.model) {
         const setup = await this.bridge.discover(signal); signal.throwIfAborted();
-        if (!setup.available || !setup.models.includes(run.options.model)) throw new WorkspaceError(409, "ai_model_unavailable");
+        if (!setup.available) throw new WorkspaceError(409, setup.error ?? "ai_unavailable");
+        if (!setup.models.includes(run.options.model)) throw new WorkspaceError(409, "ai_model_unavailable");
         // Send a bounded evidence sample, never raw media, unrelated memory, paths or credentials.
         let budget = 16_000;
         const candidates = pool.map(c => {

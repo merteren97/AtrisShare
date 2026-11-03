@@ -119,6 +119,7 @@ export type SocialTextRequest = z.infer<typeof socialTextRequestSchema>;
 export const socialTextCancelSchema = z.object({ requestId: idSchema, context: socialContextSchema, target: socialTargetSchema }).strict();
 export interface SocialTextSetup {
   available: boolean; version: string | null; models: string[]; auth: "cli-managed"; error: string | null;
+  catalog?: { state: "current" | "stale"; refreshedAt: string | null };
   maxTextChars: number; maxInstructionChars: number; maxOutputChars: number;
   memoryScope: "target-project-confirmed-only";
 }

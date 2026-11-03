@@ -310,7 +310,7 @@ These routes require the **desktop** session bearer:
 
 | Method | Route | Input / result |
 | --- | --- | --- |
-| GET | `/api/ai/setup` | Safe availability/version, actual model IDs and CLI-managed auth status |
+| GET | `/api/ai/setup` | Safe availability/version and CLI-reported model IDs; optional `catalog` freshness/last-success timestamp. `?refresh=1` forces model refresh past the setup TTL. CLI-managed auth is ownership information, not proof of successful inference. |
 | GET | `/api/ai/runs?accountId=…&projectId=…&artifactId=…` | Latest 30 scoped runs/proposals |
 | POST | `/api/ai/runs` | `{context, destinationId, artifactId, model, prompt, includeMemory, includeTranscript?, allowRemote: true}`; transcript defaults false; starts a run (`202`) |
 | POST | `/api/ai/runs/:id/preview` | `{context}`; preview render without applying (`202`) |

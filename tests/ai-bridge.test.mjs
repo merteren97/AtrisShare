@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { spawn as nodeSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { access, readFile, readdir } from "node:fs/promises";
+import { access, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { PassThrough } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
@@ -66,7 +67,8 @@ function fixture(options = {}) {
     call.child = child;
     return child;
   };
-  return { calls, bridge: new OpenCodeBridge({ executable: process.execPath, spawn, timeoutMs: options.timeoutMs ?? 15_000 }) };
+  return { calls, bridge: new OpenCodeBridge({ executable: process.execPath, spawn, timeoutMs: options.timeoutMs ?? 15_000,
+    catalogDirectory: options.catalogDirectory }) };
 }
 
 async function cleaned(calls) {
@@ -99,7 +101,8 @@ test("proposal writes prompt only to stdin; exact schema result and fixed redact
 test("child environment excludes parent tokens, OAuth, ATRIS_SHARE_*, Node options and config while preserving only credential store path", async t => {
   const sentinels = { ATRIS_SHARE_SOCIAL_TOKEN: "secret_social", ATRIS_SHARE_OPENCODE: process.execPath,
     OPENAI_API_KEY: "secret_openai", ANTHROPIC_AUTH_TOKEN: "secret_auth", NODE_OPTIONS: "--trace-warnings",
-    OPENCODE_CONFIG: "untrusted-global", OPENCODE_PERMISSION: '{"*":"allow"}', OPENCODE_SERVER_PASSWORD: "secret_server" };
+    OPENCODE_CONFIG: "untrusted-global", OPENCODE_PERMISSION: '{"*":"allow"}', OPENCODE_SERVER_PASSWORD: "secret_server",
+    OPENCODE_MODELS_PATH: "untrusted-models.json", OPENCODE_MODELS_URL: "https://untrusted.invalid" };
   const previous = Object.fromEntries(Object.keys(sentinels).map(key => [key, process.env[key]]));
   Object.assign(process.env, sentinels);
   t.after(() => { for (const [key, value] of Object.entries(previous)) {
@@ -176,7 +179,7 @@ test("unsafe effective config fails closed before debug agent, models or inferen
   for (const [name, config] of Object.entries(cases)) await t.test(name, async () => {
     const { bridge, calls } = fixture({ config });
     const result = await bridge.discover();
-    assert.deepEqual(result, { available: false, version: null, models: [], auth: "cli-managed", error: "ai_configuration_unsafe" });
+    assert.deepEqual(result, { available: false, version: "1.19.5", models: [], auth: "cli-managed", error: "ai_configuration_unsafe" });
     assert.equal(calls.length, 2);
     await cleaned(calls);
   });
@@ -207,7 +210,9 @@ test("version pin and malformed debug output never fall back to a different conf
   for (const options of [{ version: "1.20.0" }, { configText: "secret-token invalid json" }, { agentText: "secret-token" },
     { command: (call, script) => call.args[0] === "debug" ? "process.stderr.write('secret-token');process.exit(7);" : script }]) {
     const { bridge, calls } = fixture(options);
-    assert.equal((await bridge.discover()).error, "ai_configuration_unsafe");
+    const result = await bridge.discover();
+    assert.equal(result.error, options.version ? "ai_version_unsupported" : "ai_configuration_unsafe");
+    assert.equal(result.version, options.version ?? "1.19.5");
     assert.ok(calls.every(call => call.args[0] !== "run"));
     await cleaned(calls);
   }
@@ -405,4 +410,330 @@ test("cancellation also kills a real grandchild before cleanup", async () => {
   }
   assert.equal(alive, false, "owned grandchild must not be orphaned");
   await cleaned(calls);
+});
+
+const BUILTIN = "fixture/old-builtin";
+const NEW_MODEL = "fixture/new-catalog-model";
+function rawCatalog(models) {
+  return { fixture: { id: "fixture", name: "Fixture provider", env: [], npm: "@ai-sdk/openai-compatible",
+    models: Object.fromEntries(models.map(id => [id.slice("fixture/".length), {
+      id: id.slice("fixture/".length), name: id, release_date: "2026-01-01", attachment: false,
+      reasoning: false, temperature: true, tool_call: false, limit: { context: 8192, output: 1024 }
+    }])) } };
+}
+
+/** Emulates upstream disk override + swallowed download failure in real children. */
+function catalogFixture(options = {}) {
+  const state = options.state ?? { models: [NEW_MODEL], mode: "ok", refreshes: 0 };
+  const load = `const fs=require('node:fs');const path=require('node:path');
+    const source=process.env.OPENCODE_MODELS_PATH;
+    const catalog=source?JSON.parse(fs.readFileSync(source,'utf8')):${JSON.stringify(rawCatalog([BUILTIN]))};
+    const ids=Object.entries(catalog).flatMap(([p,v])=>Object.keys(v.models).map(m=>p+'/'+m));`;
+  const result = fixture({ ...options, command(call, script) {
+    assert.equal(call.options.env.OPENCODE_DISABLE_MODELS_FETCH, "1");
+    assert.equal(call.options.env.OPENCODE_MODELS_URL, undefined);
+    if (call.args[0] === "models" && call.args.includes("--refresh")) {
+      state.refreshes++;
+      assert.equal(call.options.env.OPENCODE_MODELS_PATH, undefined, "refresh must target fresh isolated upstream cache");
+      if (state.mode === "hang") return "setInterval(()=>{},1000);";
+      if (state.mode === "exit") return "process.stderr.write('secret-download-error');process.exit(7);";
+      const content = state.mode === "corrupt" ? "{not-json" : state.mode === "shape" ? "{}" : JSON.stringify(state.catalog ?? rawCatalog(state.models));
+      const write = state.mode === "missing" ? "" : `const fs=require('node:fs');const path=require('node:path');
+        const file=path.join(process.env.XDG_CACHE_HOME,'opencode','models.json');fs.mkdirSync(path.dirname(file),{recursive:true});
+        fs.writeFileSync(file,${JSON.stringify(content)});${state.mode === "oversized" ? "fs.truncateSync(file,16*1024*1024+1);" : ""}`;
+      const notice = state.notice ?? "Models cache refreshed\n";
+      const output = print(notice + (state.mode === "missing" ? [BUILTIN] : state.models).join("\n") + "\n");
+      return state.delay ? `setTimeout(()=>{${write}${output}},${state.delay});` : write + output;
+    }
+    if (call.args[0] === "models") return state.listMode === "exit" ? "process.stderr.write('secret-load-error');process.exit(7);"
+      : load + `process.stdout.write(${state.enumeratedModels ? JSON.stringify(state.enumeratedModels) : "ids"}.join('\\n')+'\\n');`;
+    if (call.args[0] === "run") return load + `if(!source||!ids.includes(${JSON.stringify(call.args[call.args.indexOf("--model") + 1])}))process.exit(8);` + script;
+    return script;
+  } });
+  return { ...result, state };
+}
+
+async function catalogDirectory(t) {
+  const directory = await mkdtemp(join(tmpdir(), "atris-catalog-test-"));
+  t.after(() => rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }));
+  return directory;
+}
+async function snapshotFile(directory) {
+  const files = await readdir(directory);
+  assert.equal(files.length, 1, "only one atomic envelope, no leftover temporary files");
+  assert.match(files[0], /^catalog-[a-f0-9]{64}\.json$/u);
+  return join(directory, files[0]);
+}
+async function expireCatalog(directory) {
+  const file = await snapshotFile(directory);
+  const value = JSON.parse(await readFile(file, "utf8"));
+  value.refreshedAt = new Date(Date.now() - 60 * 60 * 1000 - 1000).toISOString();
+  await writeFile(file, JSON.stringify(value));
+  return value;
+}
+async function waitForRefresh(calls, count = 1) {
+  for (let i = 0; i < 500; i++) {
+    const matches = calls.filter(call => call.args.includes("--refresh"));
+    if (matches.length >= count) return matches.at(-1);
+    await delay(10);
+  }
+  assert.fail("refresh child was not spawned");
+}
+
+test("catalog first refresh persists raw catalog and new IDs; a new bridge discovers and proposes without fetching or built-in fallback", async t => {
+  const directory = await catalogDirectory(t);
+  const first = catalogFixture({ catalogDirectory: directory });
+  const found = await first.bridge.discover();
+  assert.equal(found.available, true);
+  assert.deepEqual(found.models, [NEW_MODEL]);
+  assert.equal(found.catalog.state, "current");
+  assert.ok(Number.isFinite(Date.parse(found.catalog.refreshedAt)));
+  assert.equal(first.state.refreshes, 1);
+  const file = await snapshotFile(directory);
+  const envelope = JSON.parse(await readFile(file, "utf8"));
+  assert.deepEqual(envelope, { schemaVersion: 1, executable: process.execPath, version: "1.19.5",
+    refreshedAt: found.catalog.refreshedAt, catalog: rawCatalog([NEW_MODEL]), models: [NEW_MODEL] });
+  assert.ok(first.calls.every(call => !["run", "auth"].includes(call.args[0])));
+  const second = catalogFixture({ catalogDirectory: directory, state: { models: [BUILTIN], mode: "missing", refreshes: 0 } });
+  assert.deepEqual(await second.bridge.discover(), found);
+  assert.deepEqual(await second.bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal()), { ...PROPOSAL, sessionId: SESSION });
+  assert.equal(second.state.refreshes, 0);
+  const pinned = second.calls.filter(call => ["run", "models"].includes(call.args[0]));
+  assert.ok(pinned.every(call => call.options.env.OPENCODE_MODELS_PATH === join(call.options.cwd, "models.json")));
+  await cleaned([...first.calls, ...second.calls]);
+});
+
+test("forced refresh bypasses TTL and replaces models used by subsequent discovery and inference", async t => {
+  const directory = await catalogDirectory(t);
+  const { bridge, calls, state } = catalogFixture({ catalogDirectory: directory });
+  await bridge.discover();
+  state.models = ["fixture/replacement"];
+  const refreshed = await bridge.discover(undefined, { refresh: true });
+  assert.equal(refreshed.available, true);
+  assert.deepEqual(refreshed.models, state.models);
+  assert.equal(state.refreshes, 2);
+  assert.deepEqual((await bridge.discover()).models, state.models);
+  await bridge.propose({ model: state.models[0], prompt: PROMPT }, () => {}, signal());
+  await assert.rejects(bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal()), code("ai_model_unavailable"));
+  assert.equal(state.refreshes, 2);
+  assert.deepEqual(JSON.parse(await readFile(await snapshotFile(directory), "utf8")).catalog, rawCatalog(state.models));
+  await cleaned(calls);
+});
+
+test("raw official catalog aliases do not invalidate unrelated selectable models", async t => {
+  const directory = await catalogDirectory(t);
+  const catalog = rawCatalog([NEW_MODEL, "fixture/@cf/openai/gpt-oss-20b", "fixture/~google/gemini-flash-latest"]);
+  const { bridge, calls } = catalogFixture({ catalogDirectory: directory,
+    state: { models: [NEW_MODEL], mode: "ok", refreshes: 0, catalog, enumeratedModels: [NEW_MODEL] } });
+  const found = await bridge.discover();
+  assert.equal(found.available, true);
+  assert.deepEqual(found.models, [NEW_MODEL]);
+  assert.deepEqual(JSON.parse(await readFile(await snapshotFile(directory), "utf8")).catalog, catalog);
+  await bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal());
+  await cleaned(calls);
+});
+
+test("swallowed download failure retains stale IDs, timestamp and version, does not overwrite disk, and retries even after a fresh forced-refresh failure", async t => {
+  const directory = await catalogDirectory(t);
+  const { bridge, calls, state } = catalogFixture({ catalogDirectory: directory });
+  const found = await bridge.discover();
+  const file = await snapshotFile(directory);
+  const before = await readFile(file, "utf8");
+  state.mode = "missing";
+  const failed = await bridge.discover(undefined, { refresh: true });
+  assert.deepEqual(failed, { available: false, version: "1.19.5", models: [NEW_MODEL], auth: "cli-managed",
+    error: "ai_catalog_refresh_failed", catalog: { state: "stale", refreshedAt: found.catalog.refreshedAt } });
+  assert.equal(await readFile(file, "utf8"), before);
+  state.mode = "ok"; state.models = ["fixture/recovered"];
+  assert.deepEqual((await bridge.discover()).models, state.models);
+  assert.equal(state.refreshes, 3);
+  await cleaned(calls);
+});
+
+test("expired persisted catalogs refresh automatically; failed refresh remains stale across new bridges and retries on next discovery", async t => {
+  const directory = await catalogDirectory(t);
+  const first = catalogFixture({ catalogDirectory: directory });
+  await first.bridge.discover();
+  const expired = await expireCatalog(directory);
+  const second = catalogFixture({ catalogDirectory: directory, state: { models: [BUILTIN], mode: "missing", refreshes: 0 } });
+  const failed = await second.bridge.discover();
+  assert.equal(failed.error, "ai_catalog_refresh_failed");
+  assert.equal(failed.version, "1.19.5");
+  assert.deepEqual(failed.models, [NEW_MODEL]);
+  assert.deepEqual(failed.catalog, { state: "stale", refreshedAt: expired.refreshedAt });
+  // Inference can use the last-known raw snapshot, but cannot perform a refresh.
+  await second.bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal());
+  assert.equal(second.state.refreshes, 1);
+  second.state.mode = "ok";
+  const recovered = await second.bridge.discover();
+  assert.equal(recovered.available, true);
+  assert.equal(recovered.catalog.state, "current");
+  assert.deepEqual(recovered.models, [BUILTIN]);
+  assert.equal(second.state.refreshes, 2);
+  await cleaned([...first.calls, ...second.calls]);
+});
+
+test("refresh is not published until enumeration from the pinned raw catalog also succeeds", async t => {
+  const directory = await catalogDirectory(t);
+  const { bridge, calls, state } = catalogFixture({ catalogDirectory: directory });
+  const first = await bridge.discover();
+  const file = await snapshotFile(directory), before = await readFile(file, "utf8");
+  state.models = ["fixture/unloadable"]; state.listMode = "exit";
+  const failed = await bridge.discover(undefined, { refresh: true });
+  assert.deepEqual(failed, { ...first, available: false, error: "ai_catalog_refresh_failed",
+    catalog: { ...first.catalog, state: "stale" } });
+  assert.equal(await readFile(file, "utf8"), before);
+  await snapshotFile(directory);
+  await cleaned(calls);
+});
+
+test("missing/corrupt/oversized refresh files cannot be mistaken for CLI success, even with model IDs and exact notice", async t => {
+  for (const mode of ["missing", "corrupt", "shape", "oversized", "exit"]) await t.test(mode, async t => {
+    const directory = await catalogDirectory(t);
+    const { bridge, calls } = catalogFixture({ catalogDirectory: directory, state: { models: [NEW_MODEL], mode, refreshes: 0 } });
+    assert.deepEqual(await bridge.discover(), { available: false, version: "1.19.5", models: [], auth: "cli-managed",
+      error: "ai_catalog_refresh_failed", catalog: { state: "stale", refreshedAt: null } });
+    assert.deepEqual(await readdir(directory), []);
+    await assert.rejects(bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal()), code("ai_catalog_refresh_failed"));
+    assert.ok(calls.every(call => call.args[0] !== "run"));
+    await cleaned(calls);
+  });
+});
+
+test("corrupt, oversized and wrong-key persisted envelopes trigger recovery; inference alone never downloads", async t => {
+  for (const corruption of ["json", "oversized", "executable", "version", "timestamp", "models", "catalog", "schema"]) await t.test(corruption, async t => {
+    const directory = await catalogDirectory(t);
+    const first = catalogFixture({ catalogDirectory: directory });
+    await first.bridge.discover();
+    const file = await snapshotFile(directory);
+    const envelope = JSON.parse(await readFile(file, "utf8"));
+    if (corruption === "json") await writeFile(file, "{invalid");
+    else if (corruption === "oversized") await truncate(file, 21 * 1024 * 1024);
+    else {
+      if (corruption === "executable") envelope.executable = "other-executable";
+      if (corruption === "version") envelope.version = "1.20.0";
+      if (corruption === "timestamp") envelope.refreshedAt = "invalid";
+      if (corruption === "models") envelope.models = ["--secret-token"];
+      if (corruption === "catalog") envelope.catalog = {};
+      if (corruption === "schema") envelope.schemaVersion = 2;
+      await writeFile(file, JSON.stringify(envelope));
+    }
+    const second = catalogFixture({ catalogDirectory: directory });
+    await assert.rejects(second.bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal()), code("ai_catalog_refresh_failed"));
+    assert.equal(second.state.refreshes, 0);
+    assert.equal((await second.bridge.discover()).available, true);
+    assert.equal(second.state.refreshes, 1);
+    await snapshotFile(directory);
+    await cleaned([...first.calls, ...second.calls]);
+  });
+});
+
+test("refresh accepts only the exact known notice, otherwise model IDs remain strict", async t => {
+  for (const notice of ["", "Models cache refreshed\n", "Models cache refreshed: secret-token\n", "\u001b[92mModels cache refreshed\u001b[0m\n"]) await t.test(JSON.stringify(notice), async t => {
+    const directory = await catalogDirectory(t);
+    const { bridge, calls } = catalogFixture({ catalogDirectory: directory, state: { models: [NEW_MODEL], mode: "ok", refreshes: 0, notice } });
+    const found = await bridge.discover();
+    assert.equal(found.available, notice === "" || notice === "Models cache refreshed\n");
+    if (!found.available) assert.equal(found.error, "ai_catalog_refresh_failed");
+    await cleaned(calls);
+  });
+});
+
+test("explicit refresh without a directory retains an in-memory snapshot reused by inference", async () => {
+  const { bridge, calls, state } = catalogFixture();
+  assert.deepEqual((await bridge.discover()).models, [BUILTIN], "legacy mode is unchanged until refresh requested");
+  const found = await bridge.discover(undefined, { refresh: true });
+  assert.equal(found.available, true);
+  assert.equal(found.catalog, undefined, "do not imply persistent catalog configuration");
+  assert.deepEqual(found.models, [NEW_MODEL]);
+  await bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal());
+  assert.equal(state.refreshes, 1);
+  await cleaned(calls);
+});
+
+test("shared bridge concurrent discoveries perform one initial download; independent bridge instances also serialize the same cache", async t => {
+  const directory = await catalogDirectory(t);
+  const first = catalogFixture({ catalogDirectory: directory, state: { models: [NEW_MODEL], mode: "ok", refreshes: 0, delay: 150 } });
+  const second = catalogFixture({ catalogDirectory: directory });
+  const results = await Promise.all([first.bridge.discover(), first.bridge.discover(), second.bridge.discover()]);
+  assert.ok(results.every(result => result.available && result.models[0] === NEW_MODEL));
+  assert.equal(first.state.refreshes + second.state.refreshes, 1);
+  await Promise.all([first.bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal()),
+    first.bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal())]);
+  assert.equal(new Set(first.calls.filter(call => call.args[0] === "run").map(call => call.options.cwd)).size, 2);
+  await cleaned([...first.calls, ...second.calls]);
+});
+
+test("overlapping forced refreshes serialize publication so an older download cannot overwrite the newer request", async t => {
+  const directory = await catalogDirectory(t);
+  const first = catalogFixture({ catalogDirectory: directory, state: { models: ["fixture/older"], mode: "ok", refreshes: 0, delay: 500 } });
+  const second = catalogFixture({ catalogDirectory: directory, state: { models: ["fixture/newer"], mode: "ok", refreshes: 0 } });
+  const older = first.bridge.discover(undefined, { refresh: true });
+  await waitForRefresh(first.calls);
+  const newer = second.bridge.discover(undefined, { refresh: true });
+  assert.deepEqual((await older).models, ["fixture/older"]);
+  assert.deepEqual((await newer).models, ["fixture/newer"]);
+  assert.deepEqual(JSON.parse(await readFile(await snapshotFile(directory), "utf8")).models, ["fixture/newer"]);
+  assert.deepEqual((await first.bridge.discover()).models, ["fixture/newer"]);
+  await cleaned([...first.calls, ...second.calls]);
+});
+
+test("catalog refresh cancellation and timeout kill the real child, retain prior cache, and permit recovery", async t => {
+  for (const mode of ["cancel", "timeout"]) await t.test(mode, async t => {
+    const directory = await catalogDirectory(t);
+    const first = catalogFixture({ catalogDirectory: directory });
+    await first.bridge.discover();
+    const file = await snapshotFile(directory), before = await readFile(file, "utf8");
+    const second = catalogFixture({ catalogDirectory: directory, timeoutMs: mode === "timeout" ? 1500 : 15_000,
+      state: { models: [NEW_MODEL], mode: "hang", refreshes: 0 } });
+    const controller = new AbortController();
+    const pending = second.bridge.discover(controller.signal, { refresh: true });
+    await waitForRefresh(second.calls);
+    if (mode === "cancel") controller.abort(new Error("secret-token"));
+    const failed = await pending;
+    assert.equal(failed.error, mode === "cancel" ? "ai_cancelled" : "ai_timeout");
+    assert.equal(failed.version, "1.19.5");
+    assert.deepEqual(failed.models, [NEW_MODEL]);
+    assert.equal(failed.catalog.state, "stale");
+    assert.equal(await readFile(file, "utf8"), before);
+    await cleaned(second.calls);
+    second.state.mode = "ok";
+    assert.equal((await second.bridge.discover()).available, true);
+    await cleaned([...first.calls, ...second.calls]);
+  });
+});
+
+test("cancelling a queued catalog consumer does not cancel the owning refresh or wedge later consumers", async t => {
+  const directory = await catalogDirectory(t);
+  const { bridge, calls } = catalogFixture({ catalogDirectory: directory, state: { models: [NEW_MODEL], mode: "ok", refreshes: 0, delay: 1000 } });
+  const owner = bridge.discover();
+  await waitForRefresh(calls);
+  const controller = new AbortController();
+  const waiter = bridge.discover(controller.signal);
+  for (let i = 0; i < 500 && calls.filter(call => call.args[0] === "debug" && call.args[1] === "agent").length < 2; i++) await delay(5);
+  await delay(50);
+  controller.abort();
+  assert.equal((await waiter).error, "ai_cancelled");
+  assert.equal((await owner).available, true);
+  assert.equal((await bridge.discover()).available, true);
+  await cleaned(calls);
+});
+
+test("unsupported versions preserve only bounded semver and fail closed before config, catalog or inference", async t => {
+  const directory = await catalogDirectory(t);
+  for (const version of ["1.20.0", "1.19.5-beta.1+build", "1.19.5+build", "01.19.5", "secret-token", "1.19.5\nsecret-token", "1.19.5+" + "a".repeat(60)]) {
+    const { bridge, calls } = catalogFixture({ catalogDirectory: directory, version });
+    const found = await bridge.discover();
+    assert.equal(found.error, "ai_version_unsupported");
+    assert.equal(found.version, ["1.20.0", "1.19.5-beta.1+build", "1.19.5+build"].includes(version) ? version : null);
+    assert.deepEqual(found.catalog, { state: "stale", refreshedAt: null });
+    assert.equal(calls.length, 1);
+    await assert.rejects(bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal()), code("ai_version_unsupported"));
+    assert.ok(calls.every(call => call.args[0] === "--version"));
+    await cleaned(calls);
+  }
+  assert.deepEqual(await readdir(directory), []);
+  for (const catalogDirectory of ["relative/catalog", "bad\0path"]) {
+    assert.throws(() => new OpenCodeBridge({ catalogDirectory }), code("ai_invalid_catalog_directory"));
+  }
 });

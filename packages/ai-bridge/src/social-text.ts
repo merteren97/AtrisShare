@@ -17,7 +17,7 @@ const resultSchema = z.object({ summary: literalText.max(600), edit: z.object({
  */
 export class OpenCodeTextBridge {
   constructor(private readonly bridge: SocialOneShotPort = new OpenCodeBridge()) {}
-  discover(signal: AbortSignal) { return this.bridge.discover(signal); }
+  discover(signal: AbortSignal, options?: { refresh?: boolean }) { return this.bridge.discover(signal, options); }
   async complete(input: { modelId: string; prompt: string }, signal: AbortSignal): Promise<SocialTextBridgeResult> {
     if (Buffer.byteLength(input.prompt, "utf8") > 60 * 1024) throw new Error("ai_invalid_input");
     let scopedRequest: unknown;

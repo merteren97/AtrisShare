@@ -7,7 +7,7 @@ function localRuntime(): Plugin {
   return {
     name: "atris-share-local-runtime",
     async configureServer(server) {
-      const runtime = await startApi({ allowedOrigins: [DEV_ORIGIN], managedMediaTools: true });
+      const runtime = await startApi({ allowedOrigins: [DEV_ORIGIN], managedMediaTools: true, refreshAiModels: true });
       server.httpServer?.once("close", () => { void runtime.close(); });
       server.middlewares.use("/__atris/bootstrap", (request, response) => {
         if (request.method !== "GET" || request.headers.host !== new URL(DEV_ORIGIN).host ||

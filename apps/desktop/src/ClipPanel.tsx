@@ -6,10 +6,12 @@ import type { StudioProps, StudioArtifact } from "./Studio";
 import { isTranscriptReady, TranscriptionPanel, type Transcript } from "./TranscriptionPanel";
 import { mediaBlob, request } from "./api";
 import { clipError, clipText, type ClipText } from "./clips-i18n";
+import { assistantError, assistantText } from "./assistant-i18n";
 import "./clips.css";
 
 type Props = Pick<StudioProps, "context" | "account" | "language"> & { artifact: StudioArtifact; onSeek: (seconds: number) => void; onChanged: () => void };
-type Setup = { available: boolean; models: string[] };
+type Setup = { available: boolean; models: string[]; version?: string | null; error?: string | null;
+  catalog?: { state: "current" | "stale"; refreshedAt: string | null } };
 const time = (value: number) => `${Math.floor(value / 60).toString().padStart(2, "0")}:${(value % 60).toFixed(2).padStart(5, "0")}`;
 export function ClipPanel(props: Props) {
   return <ClipSession key={`${props.context.accountId}:${props.context.projectId}:${props.artifact.id}:${props.artifact.sha256}`} {...props} />;
@@ -60,10 +62,26 @@ function ClipSession({ artifact, context, account, language, onSeek, onChanged }
     finally { if (!signal.aborted) { operation.current = false; setBusy(false); } }
   }
   function update(value: ClipAnalysis) { setRuns(previous => [value, ...previous.filter(old => old.id !== value.id)]); setActiveId(value.id); }
+  function refreshModels() {
+    void act(async signal => {
+      try {
+        const value = await request<Setup>("/api/ai/setup?refresh=1", "GET", undefined, signal);
+        if (signal.aborted) return;
+        setSetup(value);
+        if (!value.models.includes(model)) setModel("");
+        if (!value.available || !value.models.includes(model)) setConsent(false);
+      } catch {
+        if (signal.aborted) return;
+        setSetup(previous => ({ ...previous, available: false, models: previous?.models ?? [], error: "ai_catalog_refresh_failed",
+          catalog: { state: "stale", refreshedAt: previous?.catalog?.refreshedAt ?? null } }));
+        setConsent(false);
+      }
+    });
+  }
   const disabled = busy || loading;
   return <div className="studio-inspector-form clips-panel">
     <header className="clips-heading"><Scissors size={18} /><div><h2>{t("title")}</h2><p>{t("help")}</p></div></header>
-    <form onSubmit={event => { event.preventDefault(); if (!ready || !valid || running || dirty.size) return; void act(async signal => {
+    <form onSubmit={event => { event.preventDefault(); if (!ready || !valid || running || dirty.size || mode === "ai" && (!consent || !setup?.available || !setup.models.includes(model))) return; void act(async signal => {
       const value = await request<ClipAnalysis>("/api/clips", "POST", { context, artifactId: artifact.id, destinationId: account.destinationId,
         options: { minSeconds: +minimum, targetSeconds: +target, maxSeconds: +maximum, count: +count, model: mode === "ai" ? model : null, includeTranscript: mode === "ai" && consent, includeHistory: history } }, signal);
       if (!signal.aborted) { setSelected([]); update(value); }
@@ -72,9 +90,12 @@ function ClipSession({ artifact, context, account, language, onSeek, onChanged }
         <label className="form-field">{t("mode")}<select value={mode} onChange={event => { setMode(event.target.value); setConsent(false); }}><option value="local">{t("local")}</option><option value="ai">{t("ai")}</option></select></label>
         <p className="studio-help">{t(mode === "ai" ? "aiHelp" : "localHelp")}</p>
         {mode === "ai" && <>
-          <button className="button secondary" type="button" onClick={() => { void act(async signal => { const value = await request<Setup>("/api/ai/setup", "GET", undefined, signal); if (!signal.aborted) { setSetup(value); if (!value.models.includes(model)) setModel(""); } }); }}><RefreshCw size={13} />{t("discover")}</button>
-          {setup && !setup.available && <p className="studio-inline-error">{t("noModels")}</p>}
-          <label className="form-field">{t("model")}<select value={model} onChange={event => { setModel(event.target.value); setConsent(false); }} required><option value="">{t("chooseModel")}</option>{setup?.models.map(id => <option key={id}>{id}</option>)}</select></label>
+          <button className="button secondary" type="button" onClick={refreshModels}><RefreshCw size={13} />{t("discover")}</button>
+          {setup?.version && <p className="studio-help">OpenCode CLI · {setup.version}</p>}
+          {setup?.catalog && <p className="studio-help" role="status">{assistantText(language)(setup.catalog.state === "stale" ? "catalogStale" : "catalogCurrent")}
+            {setup.catalog.refreshedAt && <> · {assistantText(language)("catalogUpdated")} <time dateTime={setup.catalog.refreshedAt}>{new Date(setup.catalog.refreshedAt).toLocaleString(language)}</time></>}</p>}
+          {setup && !setup.available && <p className="studio-inline-error">{setup.error ? assistantError(setup.error, assistantText(language)) : t("noModels")}</p>}
+          <label className="form-field">{t("model")}<select value={model} disabled={!setup?.available} onChange={event => { setModel(event.target.value); setConsent(false); }} required><option value="">{t("chooseModel")}</option>{setup?.models.map(id => <option key={id}>{id}</option>)}</select></label>
           <label className="studio-checkbox"><input type="checkbox" checked={consent} onChange={event => setConsent(event.target.checked)} />{t("consent")}</label>
         </>}
         <div className="clips-duration">{([["min", minimum, setMinimum], ["target", target, setTarget], ["max", maximum, setMaximum]] as const).map(([key, value, setter]) => <label key={key} className="form-field">{t(key)}<input type="number" min={2} max={180} step="any" required value={value} onChange={event => setter(event.target.value)} /></label>)}</div>

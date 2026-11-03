@@ -31,6 +31,7 @@ import twitterText from "twitter-text";
 import { MediaTools, mediaToolsSchema } from "./media-tools.js";
 import { TranscriptionEngine } from "../../../packages/media-engine/src/transcription.js";
 import { ManagedMediaTools } from "./managed-media-tools.js";
+import { OpenCodeBridge } from "../../../packages/ai-bridge/src/opencode.js";
 
 export interface ApiOptions {
   dataDirectory?: string;
@@ -50,6 +51,8 @@ export interface ApiOptions {
   socialText?: SocialTextOptions;
   /** Product entry points enable background provisioning; embedded/test APIs stay offline. */
   managedMediaTools?: boolean;
+  /** Product launch warms model discovery without blocking runtime readiness. */
+  refreshAiModels?: boolean;
 }
 export const NATIVE_ORIGINS = ["tauri://localhost", "http://tauri.localhost", "https://tauri.localhost"];
 const MAX_BODY = 32 * 1024;
@@ -98,11 +101,12 @@ export async function startApi(options: ApiOptions = {}) {
   const toolPaths = managedTools ? await managedTools.initialize(savedToolPaths) : savedToolPaths;
   const studio = new StudioService(store, youtube, credentialVault, directory, { ...options.studio, engine: { ...toolPaths, ...options.studio?.engine } });
   const transcription = new TranscriptionService(store, studio, options.transcription ?? { engine: new TranscriptionEngine(toolPaths) });
-  const ai = new AiService(store, studio, { ...options.ai, transcription });
-  const clips = new ClipService(store, studio, transcription, options.clips);
+  const aiBridge = new OpenCodeBridge({ catalogDirectory: join(directory, "ai", "opencode") });
+  const ai = new AiService(store, studio, { bridge: aiBridge, ...options.ai, transcription });
+  const clips = new ClipService(store, studio, transcription, { bridge: aiBridge, ...options.clips });
   const social = new SocialService(store.social, credentialVault, { validateXText: text => twitterText.parseTweet(text).valid,
     xTextMetrics: text => { const r = twitterText.parseTweet(text); return { weightedLength: r.weightedLength, valid: r.valid }; }, ...options.social, mediaPath: id => studio.engine.path(id) });
-  const socialText = new SocialTextService(store, options.socialText);
+  const socialText = new SocialTextService(store, { bridge: aiBridge, ...options.socialText });
   const scheduler = new Scheduler(store, (kind, id, context, destinationId) => {
     if (kind === "youtube") studio.reconcile(id, context);
     else social.reconcile(id, { accountId: context.accountId, projectId: context.projectId!, destinationId });
@@ -200,7 +204,7 @@ export async function startApi(options: ApiOptions = {}) {
       } else if (route === "GET /api/studio") {
         send(response, 200, { ...await studio.snapshot(queryContext(url)), processing: managedTools?.view() });
       } else if (route === "GET /api/ai/setup") {
-        send(response, 200, await ai.setup());
+        send(response, 200, await ai.setup(url.searchParams.get("refresh") === "1"));
       } else if (route === "GET /api/ai/runs") {
         send(response, 200, ai.runs(idSchema.parse(url.searchParams.get("artifactId")), queryContext(url)));
       } else if (route === "POST /api/ai/runs") {
@@ -365,5 +369,8 @@ export async function startApi(options: ApiOptions = {}) {
       });
     });
   } catch (error) { scheduler.close(); await Promise.all([managedTools?.close(), clips.close(), ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()]); store.close(); throw error; }
+  // Discovery only: no inference, browser login or media is sent at startup.
+  // AiService owns cancellation and awaits this work during shutdown.
+  if (options.refreshAiModels) void ai.setup(true).catch(() => undefined);
   return { origin, token, close, server };
 }

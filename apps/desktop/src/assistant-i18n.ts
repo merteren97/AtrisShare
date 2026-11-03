@@ -1,7 +1,8 @@
 const en = {
   title: "Editing assistant", intro: "Describe the edit. Review the proposal before changing your timeline.",
   setup: "OpenCode CLI", checking: "Checking local setup…", available: "Available", unavailable: "Unavailable",
-  refresh: "Refresh setup & history", cliHelp: "Install and sign in through the OpenCode CLI, then refresh. Authentication is managed by the CLI.",
+  refresh: "Refresh models & history", cliHelp: "Install and sign in through the OpenCode CLI, then refresh. Authentication is managed by the CLI.",
+  catalogCurrent: "Model catalog up to date", catalogStale: "Model catalog could not be updated", catalogUpdated: "Last updated",
   noModels: "No models discovered. Configure a provider in OpenCode, then refresh.", model: "Model", chooseModel: "Choose an exact model", request: "Your editing request",
   memory: "Include confirmed account/project memory", memoryHelp: "Optional. Only confirmed account-wide and project memory for this target is included.",
   disclosure: "Generate sends your request, source metadata and current timeline to the selected provider, which may be remote. If you select Include local transcript, its timestamped segments and text are also sent. No media bytes, frames or audio are sent. The CLI uses an isolated temporary session; AtrisShare saves proposal history locally.",
@@ -43,6 +44,8 @@ const en = {
   errorGeneric: "The operation could not be completed. Retry the action or refresh the workspace.",
   errorConnection: "The local runtime is unreachable. Restore the connection, then retry.",
   errorSetup: "OpenCode is unavailable or its configuration could not be verified. Check the local CLI setup and refresh.",
+  errorVersion: "This OpenCode version is not supported yet. This adapter has been verified with 1.19.5.",
+  errorCatalog: "The model catalog could not be downloaded or verified. Check your connection and refresh models again. Your last saved list is retained.",
   errorModel: "This model is no longer available. Refresh discovery and choose a model again.",
   errorTimeout: "The request timed out. You can edit the request and retry explicitly.",
   errorOutput: "The model did not return a valid edit proposal. Edit the request or choose another model and retry.",
@@ -57,7 +60,8 @@ type AssistantKey = keyof typeof en;
 const tr: Record<AssistantKey, string> = {
   title: "Kurgu asistanı", intro: "İstediğiniz kurguyu anlatın. Zaman çizelgesini değiştirmeden önce öneriyi inceleyin.",
   setup: "OpenCode CLI", checking: "Yerel kurulum denetleniyor…", available: "Kullanılabilir", unavailable: "Kullanılamıyor",
-  refresh: "Kurulumu ve geçmişi yenile", cliHelp: "OpenCode CLI’ı kurup CLI üzerinden oturum açın, ardından yenileyin. Kimlik doğrulamayı CLI yönetir.",
+  refresh: "Modelleri ve geçmişi yenile", cliHelp: "OpenCode CLI’ı kurup CLI üzerinden oturum açın, ardından yenileyin. Kimlik doğrulamayı CLI yönetir.",
+  catalogCurrent: "Model kataloğu güncel", catalogStale: "Model kataloğu güncellenemedi", catalogUpdated: "Son güncelleme",
   noModels: "Model bulunamadı. OpenCode’da bir sağlayıcı yapılandırıp yenileyin.", model: "Model", chooseModel: "Tam model adını seçin", request: "Kurgu isteğiniz",
   memory: "Onaylı hesap/proje belleğini ekle", memoryHelp: "İsteğe bağlıdır. Yalnızca bu hedefin hesap geneli ve proje kapsamındaki onaylı belleği eklenir.",
   disclosure: "Öneri oluştur, isteğinizi, kaynak üst verilerini ve güncel zaman çizelgesini uzakta çalışabilen seçili sağlayıcıya gönderir. Yerel dökümü ekle seçilirse zaman damgalı bölümler ve metin de gönderilir. Medya baytları, kare veya ses gönderilmez. CLI izole geçici oturum kullanır; AtrisShare öneri geçmişini yerelde kaydeder.",
@@ -99,6 +103,8 @@ const tr: Record<AssistantKey, string> = {
   errorGeneric: "İşlem tamamlanamadı. İşlemi yeniden deneyin veya çalışma alanını yenileyin.",
   errorConnection: "Yerel çalışma zamanına ulaşılamıyor. Bağlantıyı düzeltip yeniden deneyin.",
   errorSetup: "OpenCode kullanılamıyor veya yapılandırması doğrulanamadı. Yerel CLI kurulumunu denetleyip yenileyin.",
+  errorVersion: "Bu OpenCode sürümü henüz desteklenmiyor. Bu adaptör 1.19.5 ile doğrulandı.",
+  errorCatalog: "Model kataloğu indirilemedi veya doğrulanamadı. Bağlantınızı denetleyip modelleri yeniden yenileyin. Son kaydedilen liste korunur.",
   errorModel: "Bu model artık kullanılamıyor. Model listesini yenileyip tekrar seçim yapın.",
   errorTimeout: "İstek zaman aşımına uğradı. İsteği düzenleyip yeniden başlatabilirsiniz.",
   errorOutput: "Model geçerli bir kurgu önerisi döndürmedi. İsteği düzenleyin veya başka bir model seçip yeniden deneyin.",
@@ -116,6 +122,8 @@ export function assistantError(error: unknown, t: AssistantTranslate): string {
   if (/transcript|transcription/u.test(code)) return transcriptionError(error, t);
   if (/revision|conflict|stale|source_changed|hash_mismatch/u.test(code)) return t("stale");
   if (/connection_failed|invalid_runtime|network/u.test(code) || error instanceof TypeError) return t("errorConnection");
+  if (/ai_version_unsupported/u.test(code)) return t("errorVersion");
+  if (/ai_catalog_refresh_failed/u.test(code)) return t("errorCatalog");
   if (/ai_(unavailable|configuration_unsafe|invalid_executable|cleanup_failed)|tools_unavailable|media_tools/u.test(code)) return t("errorSetup");
   if (/model_unavailable|model_not_found/u.test(code)) return t("errorModel");
   if (/timeout/u.test(code)) return t("errorTimeout");

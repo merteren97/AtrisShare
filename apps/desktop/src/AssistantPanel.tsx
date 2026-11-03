@@ -12,7 +12,8 @@ export interface AssistantPanelProps {
   artifact: StudioArtifact; context: WorkspaceContext; account: WorkspaceAccount;
   language: "tr" | "en"; onApplied: () => void;
 }
-interface AiSetup { available: boolean; version: string | null; models: string[]; auth: "cli-managed"; error: string | null }
+interface AiSetup { available: boolean; version: string | null; models: string[]; auth: "cli-managed"; error: string | null;
+  catalog?: { state: "current" | "stale"; refreshedAt: string | null } }
 interface AiRun {
   id: string; context: WorkspaceContext; artifactId: string; destinationId: string; sourceSha256: string;
   baseRevision: number; model: string; prompt: string; includeMemory: boolean; includeTranscript?: boolean;
@@ -101,12 +102,12 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
 
   useEffect(() => { if (!transcriptReady) setIncludeTranscript(false); }, [transcriptReady]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (refresh = false) => {
     if (loadingRef.current || operationRef.current) return;
     loadingRef.current = true; setLoading(true); setLoadError(null);
     const signal = lifetime.current.signal;
     const results = await Promise.allSettled([
-      request<AiSetup>("/api/ai/setup", "GET", undefined, signal),
+      request<AiSetup>(`/api/ai/setup${refresh ? "?refresh=1" : ""}`, "GET", undefined, signal),
       request<AiRun[]>(runsPath, "GET", undefined, signal),
       request<Snapshot>(studioPath, "GET", undefined, signal),
     ]);
@@ -115,7 +116,8 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
     if (discovery.status === "fulfilled") {
       setSetup(discovery.value);
       setModel(current => discovery.value.models.includes(current) ? current : "");
-    } else setSetup(null);
+    } else setSetup(previous => previous ? { ...previous, available: false, error: "ai_catalog_refresh_failed",
+      catalog: { state: "stale", refreshedAt: previous.catalog?.refreshedAt ?? null } } : null);
     if (history.status === "fulfilled") {
       const visible = history.value.filter(inScope).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       setRuns(visible); setSelectedId(current => current && visible.some(run => run.id === current) ? current : visible[0]?.id ?? null);
@@ -243,7 +245,9 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
   return <section className="studio-inspector-form assistant-panel" aria-label={t("title")}>
     <header className="assistant-heading"><h2><Sparkles size={15} />{t("title")}</h2><p>{t("intro")}</p></header>
     <div className="assistant-setup"><div><strong>{t("setup")}</strong><span>{!setup ? t(loading ? "checking" : "unavailable") : t(setup.available ? "available" : "unavailable")}{setup?.version && ` · ${setup.version}`}</span></div>
-      <button className="icon-button" type="button" disabled={disabled} aria-label={t("refresh")} title={t("refresh")} onClick={() => { void load(); }}><RefreshCw size={14} className={loading ? "spinning" : ""} /></button></div>
+      <button className="icon-button" type="button" disabled={disabled} aria-label={t("refresh")} title={t("refresh")} onClick={() => { void load(true); }}><RefreshCw size={14} className={loading ? "spinning" : ""} /></button></div>
+    {setup?.catalog && <p className="studio-help" role="status">{t(setup.catalog.state === "stale" ? "catalogStale" : "catalogCurrent")}
+      {setup.catalog.refreshedAt && <> · {t("catalogUpdated")} <time dateTime={setup.catalog.refreshedAt}>{new Date(setup.catalog.refreshedAt).toLocaleString(language)}</time></>}</p>}
     {!loading && !setup?.available && <p className="studio-help">{t("cliHelp")}</p>}
     {setup?.error && <p className="studio-inline-error">{assistantError(setup.error, t)}</p>}
     {setup?.available && !setup.models.length && <p className="studio-help">{t("noModels")}</p>}

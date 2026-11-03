@@ -407,6 +407,65 @@ test("unavailable model discovery creates no run or inference task", async t => 
   assert.equal(bridge.calls.length, 0); assert.deepEqual(f.store.studio.aiRuns(a.id, f.context), []);
 });
 
+test("AI model refresh bypasses the setup TTL and retains sanitized version/catalog diagnostics", async t => {
+  const bridge = new ControlledBridge(), options = [];
+  bridge.discover = async (signal, value) => { signal.throwIfAborted(); options.push(value); return bridge.setup; };
+  const f = await fixture(t, { bridge });
+  const initial = await response(await f.call("/api/ai/setup"), 200);
+  await response(await f.call("/api/ai/setup"), 200);
+  assert.equal(options.length, 1);
+  bridge.setup = { ...initial, models: ["controlled/new-model"], catalog: { state: "current", refreshedAt: "2026-11-03T00:00:00.000Z" } };
+  const refreshed = await response(await f.call("/api/ai/setup?refresh=1"), 200);
+  assert.deepEqual(refreshed.models, ["controlled/new-model"]);
+  assert.deepEqual(options, [{ refresh: false }, { refresh: true }]);
+  assert.deepEqual(await response(await f.call("/api/ai/setup"), 200), refreshed);
+  bridge.setup = { ...refreshed, available: false, version: "1.19.5", error: "ai_catalog_refresh_failed", catalog: { ...refreshed.catalog, state: "stale" } };
+  const failed = await response(await f.call("/api/ai/setup?refresh=1"), 200);
+  assert.equal(failed.available, false); assert.equal(failed.version, "1.19.5");
+  assert.deepEqual(failed.models, refreshed.models); assert.equal(failed.catalog.state, "stale");
+  assert.equal(bridge.calls.length, 0, "refresh must never start inference");
+});
+
+test("a force refresh during initial discovery is not swallowed or overwritten by the older snapshot", async t => {
+  const bridge = new ControlledBridge(), started = gate(), finish = gate(), calls = [];
+  bridge.discover = async (signal, options) => {
+    calls.push(options); signal.throwIfAborted();
+    if (!options.refresh) { started.resolve(); await finish.promise; return bridge.setup; }
+    return { ...bridge.setup, models: ["controlled/new-model"] };
+  };
+  const f = await fixture(t, { bridge });
+  const ordinary = f.call("/api/ai/setup"); await started.promise;
+  const forced = f.call("/api/ai/setup?refresh=1");
+  // Let the request reach the service while the first discovery is blocked.
+  await delay(30); finish.resolve();
+  await response(await ordinary, 200);
+  assert.deepEqual((await response(await forced, 200)).models, ["controlled/new-model"]);
+  assert.deepEqual((await response(await f.call("/api/ai/setup"), 200)).models, ["controlled/new-model"]);
+  assert.deepEqual(calls, [{ refresh: false }, { refresh: true }]);
+});
+
+test("product startup discovers models without a selected source and does not block workspace readiness", async t => {
+  const bridge = new ControlledBridge(), started = gate(), finish = gate(), calls = [];
+  bridge.discover = async (signal, options) => {
+    calls.push(options); started.resolve();
+    await Promise.race([finish.promise, new Promise(resolve => signal.addEventListener("abort", resolve, { once: true }))]);
+    signal.throwIfAborted(); return bridge.setup;
+  };
+  const directory = await mkdtemp(join(tmpdir(), "atris-share-ai-startup-"));
+  const forbidden = async () => assert.fail("discovery must not use provider/vault effects");
+  const api = await startApi({ dataDirectory: directory, refreshAiModels: true, ai: { bridge },
+    credentialVault: { status: { available: false, provider: "unavailable" }, get: forbidden, set: forbidden, delete: forbidden },
+    youtube: { client: null, provider: new YouTubeProvider(forbidden) } });
+  t.after(async () => { finish.resolve(); await api.close(); await rm(directory, { recursive: true, force: true }); });
+  await started.promise;
+  const headers = { Authorization: `Bearer ${api.token}` };
+  assert.equal((await fetch(`${api.origin}/api/workspace`, { headers, signal: AbortSignal.timeout(2000) })).status, 200);
+  assert.deepEqual(calls, [{ refresh: true }]); assert.equal(bridge.calls.length, 0);
+  finish.resolve();
+  assert.equal((await (await fetch(`${api.origin}/api/ai/setup`, { headers })).json()).available, true);
+  assert.equal(calls.length, 1, "panel read joins startup discovery");
+});
+
 test("prompt is bounded metadata only; memory is opt-in, confirmed and account/project isolated", async t => {
   const f = await fixture(t), a = await imported(f); notes(f);
   f.store.setContext(f.other);

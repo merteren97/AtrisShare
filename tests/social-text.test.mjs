@@ -39,8 +39,8 @@ function fixture(t, options = {}) {
     listMemory(scope) { memoryReads.push({ ...scope }); return notes; }
   };
   const bridge = options.bridge ?? {
-    async discover(signal) {
-      calls.push({ kind: "discover", signal }); if (controls.discoveryGate) await controls.discoveryGate.promise;
+    async discover(signal, options) {
+      calls.push({ kind: "discover", signal, options }); if (controls.discoveryGate) await controls.discoveryGate.promise;
       return { available: true, version: "1.19.5", auth: "cli-managed", models: controls.models, error: null };
     },
     async propose(value, _onEvent, signal) {
@@ -61,7 +61,29 @@ test("social text setup returns only discovered actual model IDs and no default/
   await assert.rejects(f.service.suggest(input({ modelId: "invented/model" })), /social_ai_model_unavailable/);
   assert.equal(f.calls.filter(c => c.kind === "propose").length, 0);
   f.controls.models = [OTHER_MODEL]; await f.service.setup(undefined, true);
+  assert.deepEqual(f.calls.filter(c => c.kind === "discover").map(c => c.options), [{ refresh: false }, { refresh: true }]);
   await assert.rejects(f.service.suggest(input()), /social_ai_model_unavailable/);
+});
+
+test("social setup keeps stale catalog IDs and distinguishes version/refresh failures", async t => {
+  const refreshedAt = "2026-11-03T00:00:00.000Z";
+  const f = fixture(t, { bridge: { async discover(_signal, options) {
+    assert.equal(options.refresh, true);
+    return { available: false, version: "1.19.5", models: [MODEL], auth: "cli-managed", error: "ai_catalog_refresh_failed", catalog: { state: "stale", refreshedAt } };
+  }, async propose() { assert.fail("failed discovery cannot infer"); } } });
+  const setup = await f.service.setup(undefined, true);
+  assert.equal(setup.available, false); assert.equal(setup.error, "social_ai_catalog_refresh_failed");
+  assert.deepEqual(setup.models, [MODEL]); assert.deepEqual(setup.catalog, { state: "stale", refreshedAt });
+});
+
+test("social setup preserves full semver diagnostics without accepting arbitrary version text", async t => {
+  for (const version of ["1.20.0", "1.20.0-rc.1+build.7", "1.20.0+build.7"]) {
+    const f = fixture(t, { bridge: { async discover() {
+      return { available: false, version, models: [], auth: "cli-managed", error: "ai_version_unsupported" };
+    }, async propose() { assert.fail("unsupported version must not run"); } } });
+    const setup = await f.service.setup();
+    assert.equal(setup.version, version); assert.equal(setup.error, "social_ai_version_unsupported");
+  }
 });
 
 test("social text sends exactly the explicit variant/instruction/target, no implicit memory or publication rights", async t => {

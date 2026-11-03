@@ -32,20 +32,35 @@ export class AiService {
   private readonly shutdown = new AbortController();
   private readonly tasks = new Map<string, { abort: AbortController; promise: Promise<void> }>();
   private readonly grants = new Map<string, Grant>();
-  private discovery: Promise<Setup> | undefined;
+  private discovery: { promise: Promise<Setup>; refresh: boolean } | undefined;
+  private readonly discoveries = new Set<Promise<Setup>>();
+  private discoveryGeneration = 0;
   private cached: { value: Setup; until: number } | undefined;
   private readonly transcription: TranscriptionService | undefined;
   constructor(private readonly store: WorkspaceStore, private readonly studio: StudioService, options: AiOptions = {}) {
     this.bridge = options.bridge ?? new OpenCodeBridge();
     this.transcription = options.transcription;
   }
-  async setup(): Promise<Setup> {
+  async setup(refresh = false): Promise<Setup> {
     this.ready();
-    if (this.cached && this.cached.until > Date.now()) return this.cached.value;
-    this.discovery ??= this.bridge.discover(this.shutdown.signal).then(value => {
-      this.cached = { value, until: Date.now() + 60_000 }; return value;
-    }).finally(() => { this.discovery = undefined; });
-    return this.discovery;
+    if (this.discovery && (!refresh || this.discovery.refresh)) return structuredClone(await this.discovery.promise);
+    if (!refresh && this.cached && this.cached.until > Date.now()) return structuredClone(this.cached.value);
+    const previous = this.discovery?.promise, generation = ++this.discoveryGeneration;
+    // A force refresh arriving during an ordinary read must run after it, rather
+    // than joining the cached read or allowing its older result to win later.
+    const promise = Promise.resolve().then(async () => {
+      if (previous) await previous.catch(() => undefined);
+      this.ready();
+      const value = await this.bridge.discover(this.shutdown.signal, { refresh });
+      this.ready();
+      if (generation === this.discoveryGeneration) this.cached = { value: structuredClone(value), until: Date.now() + (value.available ? 60_000 : 5000) };
+      return value;
+    }).finally(() => {
+      this.discoveries.delete(promise);
+      if (this.discovery?.promise === promise) this.discovery = undefined;
+    });
+    this.discovery = { promise, refresh }; this.discoveries.add(promise);
+    return structuredClone(await promise);
   }
   private ready() { if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing"); }
   private scope(value: { context: WorkspaceContext; destinationId: string; artifactId: string }) {
@@ -269,6 +284,6 @@ export class AiService {
     this.shutdown.abort(); this.grants.clear();
     for (const task of this.tasks.values()) task.abort.abort();
     await Promise.allSettled([...this.tasks.values()].map(task => task.promise));
-    if (this.discovery) await this.discovery.catch(() => undefined);
+    await Promise.allSettled(this.discoveries);
   }
 }
