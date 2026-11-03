@@ -102,3 +102,23 @@ test("version overrides remain reproducible through the source commit/version an
   await writeFile(join(combined, "release-manifest.json"), JSON.stringify(manifest));
   await assert.rejects(verifyReleaseAssets(combined, selected), /provenance hash mismatch/);
 });
+
+test("signed releases bind both update platforms, signatures, checksums and provenance", async t => {
+  const root = await fixture(t);
+  await writeFile(join(root, "apps/desktop/src-tauri/tauri.conf.json"), JSON.stringify({ version, bundle: { createUpdaterArtifacts: true } }));
+  const exe = await installer(root, "nsis", ".exe"), image = await installer(root, "appimage", ".AppImage");
+  await installer(root, "deb", ".deb");
+  await assert.rejects(collectReleaseAssets(root, "windows-x64"), /ENOENT/);
+  for (const path of [exe, image]) await writeFile(`${path}.sig`, Buffer.from("synthetic signature, verified by client before install").toString("base64"));
+  const windows = await collectReleaseAssets(root, "windows-x64"), linux = await collectReleaseAssets(root, "linux-x64");
+  const combined = join(root, "combined"); await mkdir(combined);
+  for (const source of [windows.output, linux.output]) for (const name of await readdir(source)) await copyFile(join(source, name), join(combined, name));
+  await finalizeReleaseAssets(root, combined, "a".repeat(40), version);
+  assert.equal((await verifyReleaseAssets(combined, version)).length, 9);
+  const update = JSON.parse(await readFile(join(combined, "latest.json"), "utf8"));
+  assert.deepEqual(Object.keys(update.platforms), ["windows-x86_64", "linux-x86_64"]);
+  assert.ok(update.platforms["windows-x86_64"].url.startsWith(`https://github.com/merteren97/AtrisShare/releases/download/v${version}/`));
+  update.platforms["windows-x86_64"].url = "https://example.com/untrusted.exe";
+  await writeFile(join(combined, "latest.json"), JSON.stringify(update));
+  await assert.rejects(verifyReleaseAssets(combined, version), /Invalid updater manifest/);
+});

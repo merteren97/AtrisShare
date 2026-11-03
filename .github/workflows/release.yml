@@ -70,6 +70,8 @@ jobs:
       # linuxdeploy's AppImage tools can run on hosted runners without a FUSE mount.
       APPIMAGE_EXTRACT_AND_RUN: "1"
       RELEASE_VERSION_INPUT: ${{ needs.prepare.outputs.version }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -87,6 +89,13 @@ jobs:
           cache: npm
       - name: Apply the selected version to this build workspace
         run: node scripts/release-package.mjs prepare
+      - name: Require the updater signing key
+        shell: bash
+        run: |
+          if [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::Set the TAURI_SIGNING_PRIVATE_KEY repository secret before releasing. See docs/UPDATES.md."
+            exit 1
+          fi
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -102,7 +111,7 @@ jobs:
       - name: Check native behavior
         run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
       - name: Build release installers with fresh verified runtime resources
-        run: npm run tauri -w @atris-share/desktop -- build --ci --no-sign --bundles ${{ matrix.bundles }} -- --locked
+        run: npm run tauri -w @atris-share/desktop -- build --ci --bundles ${{ matrix.bundles }} -- --locked
       - name: Verify runtime and collect installers with SHA-256 checksums
         run: node scripts/release-package.mjs collect ${{ matrix.platform }}
       - uses: actions/upload-artifact@v4

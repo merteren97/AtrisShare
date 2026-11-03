@@ -84,6 +84,10 @@ sürümü kullanılır. Otomatik sürüm artırma yapılmaz. Girilen sürüm der
 tüm uygulama sürüm alanlarına uygulanır; mevcut sürüm etiketi üzerine yazılmaz.
 [Manuel release rehberi](docs/PACKAGING.md#manual-github-release).
 
+Editör, dosya seçiciden veya animasyonlu sürükle-bırak alanından çoklu video aktarır.
+Release sürümleri GitHub’daki imzalı güncellemeleri otomatik kontrol eder. İlk yayından
+önce imzalama secret’ını tanımla: [otomatik güncelleme kurulumu](docs/UPDATES.md).
+
 ## Kullanım akışı
 
 1. Bir veya birden fazla hesabı bağla, işlem yapılacak kanal/profili açıkça seç.

@@ -2,10 +2,10 @@
 
 ## Decision and acceptance boundary
 
-The current preview is **unsigned and manually updated**. There is no automatic
-updater, update feed, background download or updater artifact; Tauri explicitly
-disables updater artifacts. Signing and an authenticated update design require a
-separate decision before claiming either. Creating an NSIS installer or a CI
+Release builds now support **Minisign-verified GitHub updates**. Configure the
+signing secret before publishing; see [update setup and behavior](UPDATES.md).
+Updater signing is separate from OS Authenticode signing; Windows executables are
+not Authenticode-signed by this workflow. Creating an NSIS installer or a CI
 artifact is staging, not publishing or a release. Windows clean-machine install,
 upgrade/uninstall, native UI and all-feature/live-provider acceptance remain the
 final **Phase 9** gate. The manual release workflow targets Windows x64 and Linux
@@ -37,7 +37,8 @@ npm run test:runtime
 node scripts/package-inventory.mjs --verify apps/desktop/src-tauri/runtime
 npm run build:core
 cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
-npm run tauri -w @atris-share/desktop -- build --ci --no-sign --bundles nsis -- --locked
+$env:TAURI_SIGNING_PRIVATE_KEY = (Resolve-Path .atris-local/updater.key).Path
+npm run tauri -w @atris-share/desktop -- build --ci --bundles nsis -- --locked
 ```
 
 The Tauri pre-build hook builds frontend assets and stages runtime resources; the
@@ -57,7 +58,8 @@ CI calls it explicitly. `test:runtime` stages and exercises relocated Node/API/M
 after the workflow is present on the default branch. It has only `workflow_dispatch`;
 ordinary pushes and tags do not publish releases.
 
-1. Open **Actions → Desktop release → Run workflow** and select the source branch.
+1. Configure `TAURI_SIGNING_PRIVATE_KEY` as described in [update setup](UPDATES.md).
+   Open **Actions → Desktop release → Run workflow** and select the source branch.
    The optional **version** field accepts SemVer such as `0.2.0`, `0.2.0-beta.1`
    or `v0.2.0` (the leading `v` is normalized). Leave it blank to use the checked-out
    source version. There is **no automatic patch/minor/major increment** and no
@@ -71,13 +73,13 @@ ordinary pushes and tags do not publish releases.
    installers. Linux installs GTK/WebKit 4.1/AppIndicator and bundling prerequisites;
    AppImage tooling uses extraction mode instead of requiring a FUSE mount.
 4. The outputs are **Windows NSIS `.exe`**, **Linux `.deb` and `.AppImage`**, and
-   one `SHA256SUMS-<platform>.txt` per platform. They are also retained for 14 days
+   updater signatures for NSIS/AppImage, and one `SHA256SUMS-<platform>.txt` per platform. They are also retained for 14 days
    as `desktop-windows-x64` / `desktop-linux-x64` workflow artifacts.
 5. Only after both platforms pass does the release job download all assets, require
    all three installers and verify their hashes. It records `release-manifest.json`
    containing the source commit, source version, selected version and asset hashes.
    It creates the new tag at that source `github.sha`, then a release with the
-   installers, checksums and manifest. Repository
+   installers, signatures, checksums, `latest.json` update feed and manifest. Repository
    write permission exists only in this final job; the normal `GITHUB_TOKEN` suffices.
 
 An existing version tag is rejected; enter a new version for a new release.
@@ -109,8 +111,9 @@ node scripts/release-package.mjs prepare
 versions without changing them. A blank `RELEASE_VERSION_INPUT` selects those
 versions. Neither command performs an automatic increment.
 
-Packages are unsigned and updates remain manual. The workflow definition and local
-checks are not evidence of a completed hosted Linux build or a clean installation.
+The stable, published release becomes the automatic update channel; drafts and
+prereleases do not. The workflow definition and local checks are not evidence of a
+completed hosted Linux build, live update installation or a clean installation.
 
 ## Fail-closed staging and resource inventory
 

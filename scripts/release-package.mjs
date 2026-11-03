@@ -68,6 +68,7 @@ export async function collectReleaseAssets(root, platform) {
   if (!Object.hasOwn(formats, platform)) throw new Error("Unsupported release platform");
   const { version } = await releaseMetadata(root);
   const files = [];
+  const signed = (await json(join(root, "apps/desktop/src-tauri/tauri.conf.json"))).bundle?.createUpdaterArtifacts === true;
   for (const [bundle, extension] of Object.entries(formats[platform])) {
     const directory = join(root, "apps/desktop/src-tauri/target/release/bundle", bundle);
     const matches = (await readdir(directory)).filter(name => name.endsWith(extension));
@@ -77,6 +78,11 @@ export async function collectReleaseAssets(root, platform) {
     const digest = await fingerprint(join(directory, name));
     if (!digest.bytes) throw new Error(`Empty installer: ${name}`);
     files.push({ name, path: join(directory, name), ...digest });
+    if (signed && bundle !== "deb") {
+      const signature = `${name}.sig`;
+      await readSignature(join(directory, signature));
+      files.push({ name: signature, path: join(directory, signature), ...await fingerprint(join(directory, signature)) });
+    }
   }
   const output = join(root, "release-artifacts", platform);
   await rm(output, { recursive: true, force: true });
@@ -87,10 +93,11 @@ export async function collectReleaseAssets(root, platform) {
 }
 export async function verifyReleaseAssets(directory, version) {
   const expected = [];
+  const signed = (await readFile(join(directory, "SHA256SUMS-windows-x64.txt"), "utf8")).includes(".exe.sig");
   for (const [platform, bundles] of Object.entries(formats)) {
     const name = `SHA256SUMS-${platform}.txt`; expected.push(name);
     const lines = (await readFile(join(directory, name), "utf8")).trim().split(/\r?\n/);
-    const extensions = Object.values(bundles);
+    const extensions = Object.entries(bundles).flatMap(([bundle, extension]) => signed && bundle !== "deb" ? [extension, `${extension}.sig`] : [extension]);
     if (lines.length !== extensions.length) throw new Error(`Incomplete release assets: ${platform}`);
     const seen = new Set();
     for (const line of lines) {
@@ -104,6 +111,12 @@ export async function verifyReleaseAssets(directory, version) {
       const actual = await fingerprint(join(directory, filename));
       if (!actual.bytes || actual.sha256 !== match[1]) throw new Error(`Release checksum mismatch: ${filename}`);
     }
+  }
+  if (signed) {
+    const manifest = await json(join(directory, "latest.json"));
+    const expectedManifest = await updaterManifest(directory, version);
+    if (JSON.stringify(manifest) !== JSON.stringify(expectedManifest)) throw new Error("Invalid updater manifest");
+    expected.push("latest.json");
   }
   const actualNames = (await readdir(directory)).sort();
   if (actualNames.includes("release-manifest.json")) {
@@ -126,12 +139,37 @@ export async function finalizeReleaseAssets(root, directory, sourceCommit, sourc
   if (!/^[a-f0-9]{40}$/.test(sourceCommit ?? "")) throw new Error("Invalid source commit");
   validateVersion(sourceVersion);
   const metadata = await releaseMetadata(root);
+  const config = await json(join(root, "apps/desktop/src-tauri/tauri.conf.json"));
+  if (config.bundle?.createUpdaterArtifacts === true) {
+    await writeFile(join(directory, "latest.json"), `${JSON.stringify(await updaterManifest(directory, metadata.version), null, 2)}\n`, { flag: "wx" });
+  }
   const files = await verifyReleaseAssets(directory, metadata.version);
   const manifest = { schemaVersion: 1, ...metadata, sourceCommit, sourceVersion,
     versionOverrideApplied: sourceVersion !== metadata.version,
     files: await Promise.all(files.map(async name => ({ name, ...await fingerprint(join(directory, name)) }))) };
   await writeFile(join(directory, "release-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, { flag: "wx" });
   return manifest;
+}
+
+async function readSignature(path) {
+  const signature = (await readFile(path, "utf8")).trim();
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(signature) || Buffer.from(signature, "base64").length < 32) throw new Error("Missing or invalid updater signature");
+  return signature;
+}
+export async function updaterManifest(directory, version) {
+  validateVersion(version);
+  const names = await readdir(directory);
+  const platforms = {};
+  for (const [platform, extension] of [["windows-x86_64", ".exe"], ["linux-x86_64", ".AppImage"]]) {
+    const candidates = names.filter(name => name.endsWith(extension));
+    if (candidates.length !== 1 || !versionedInstaller(candidates[0], version, extension)) throw new Error("Missing or stale updater installer");
+    const name = candidates[0];
+    platforms[platform] = {
+      signature: await readSignature(join(directory, `${name}.sig`)),
+      url: `https://github.com/merteren97/AtrisShare/releases/download/v${version}/${encodeURIComponent(name)}`
+    };
+  }
+  return { version, notes: `AtrisShare ${version}`, platforms };
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const command = process.argv[2];

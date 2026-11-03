@@ -1,4 +1,27 @@
 .studio { min-width: 0; container-type: inline-size; }
+.studio-drop-overlay { position: fixed; inset: 41px 0 0; z-index: 45; display: grid; place-items: center; padding: 24px; background: color-mix(in srgb, var(--bg) 85%, transparent); backdrop-filter: blur(5px); pointer-events: none; animation: studio-drop-in 160ms ease-out; }
+.studio-drop-overlay::before { content: ""; position: absolute; inset: 16px; border: 2px dashed var(--accent); border-radius: 14px; }
+.studio-drop-card { display: grid; justify-items: center; gap: 16px; max-width: 460px; text-align: center; color: var(--text); }
+.studio-drop-card strong { font-size: 20px; }
+.studio-drop-card p { color: var(--muted); font-size: 12px; line-height: 1.8; }
+.studio-drop-icon { display: grid; place-items: center; width: 84px; height: 84px; border: 1px solid var(--accent); border-radius: 22px; color: var(--accent); background: var(--accent-soft); animation: studio-drop-float 1.5s ease-in-out infinite; }
+.studio-drop-hint { color: var(--faint); font-size: 11px; margin-top: 14px; }
+.studio-imports { border: 1px solid var(--line); border-radius: 8px; background: var(--surface); padding: 12px 15px; margin-bottom: 16px; }
+.studio-import-heading { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 28px; font-size: 12px; }
+.studio-imports progress { display: block; width: 100%; height: 4px; margin: 8px 0 10px; accent-color: var(--accent); }
+.studio-imports progress::-webkit-progress-bar { background: var(--line); border-radius: 4px; }
+.studio-imports progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
+.studio-imports progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
+.studio-imports ul { list-style: none; padding: 0; margin: 0; max-height: 150px; overflow: auto; }
+.studio-imports li { display: flex; align-items: center; gap: 9px; padding: 7px 0; font-size: 11px; color: var(--muted); }
+.studio-imports li > svg { flex-shrink: 0; }
+.studio-imports li > span { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.studio-imports li > small { max-width: 55%; text-align: right; overflow-wrap: anywhere; line-height: 1.6; }
+.studio-imports li[data-state="imported"] > svg { color: var(--accent); }
+.studio-imports li[data-state="failed"] { color: var(--danger); }
+@keyframes studio-drop-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes studio-drop-float { 50% { transform: translateY(-7px); } }
+@media (prefers-reduced-motion: reduce) { .studio-drop-overlay, .studio-drop-icon { animation: none; } }
 .studio [hidden] { display: none !important; }
 main:has(> .studio) { padding: 22px 24px 24px; }
 .studio-heading { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 16px; }

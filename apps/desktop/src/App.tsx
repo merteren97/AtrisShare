@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowUpRight, BrainCircuit, Check, ChevronRight, CircleAlert, Database, Clapperboard, FolderKanban, HardDrive,
-  CalendarClock, Send, LoaderCircle, NotebookPen, Plus, RefreshCw, Scissors, Search, Settings2, Share2, ShieldCheck, UsersRound, X } from "lucide-react";
+  CalendarClock, Send, LoaderCircle, NotebookPen, Plus, RefreshCw, Scissors, Search, Settings2, ShieldCheck, UsersRound, X } from "lucide-react";
 import type { WorkspaceAccount, WorkspaceContext, WorkspaceMemory, WorkspaceProject } from "../../../packages/domain/src/workspace.js";
 import { ApiError, request } from "./api";
 import { dictionaries, kindKeys, type Language, type TextKey } from "./i18n";
@@ -14,6 +14,7 @@ import { QueuePanel } from "./QueuePanel";
 import { NativeSettings } from "./NativeSettings";
 import { MemoryExport } from "./MemoryExport";
 import { MediaToolSettings } from "./MediaToolSettings";
+import { AppUpdater } from "./AppUpdater";
 import { notifyDue, onNativeOpenQueue } from "./native-desktop";
 import type { Occurrence } from "../../../packages/domain/src/scheduling.js";
 
@@ -185,14 +186,12 @@ export function App() {
     onEdit={value => open({ type: "memory", entry: value })} onDelete={value => open({ type: "delete", entry: value })} />;
   const modalTitle = modal?.type === "project" ? t("newProject") : modal?.type === "delete" ? t("deleteTitle") : modal?.type === "memory" && modal.entry ? t("edit") : t("newMemory");
 
-  return <div className="desktop-shell"><Titlebar language={language} /><div className="app-shell">
+  return <div className="desktop-shell"><Titlebar language={language} /><AppUpdater language={language} /><div className="app-shell">
     <aside className="sidebar" aria-label="AtrisShare">
-      <a className="brand" href="#" onClick={event => { event.preventDefault(); setPage("studio"); }}><span className="brand-mark"><Share2 size={21} strokeWidth={2.4} /></span><span>Atris<span className="brand-light">Share</span></span></a>
       <button className="button sidebar-create" disabled={ws.loading || !state} title={t("newProject")} onClick={() => open({ type: "project" })}><Plus size={16} /><span>{t("newProject")}</span></button>
       <div className="sidebar-label">{t("studioLabel")}</div>
       <nav aria-label={t("workspace")}>{nav.map(item => <button key={item.id} className={`nav-item ${page === item.id ? "active" : ""}`} aria-current={page === item.id ? "page" : undefined}
         title={t(item.id)} onClick={() => { if (item.id === "studio") setStudioTab("media"); setPage(item.id); }}><item.icon size={18} /><span>{t(item.id)}</span>{item.id === "memory" && <small>{ws.memory.length}</small>}</button>)}</nav>
-      <div className="sidebar-bottom"><ShieldCheck size={17} /><div><strong>{t("local")}</strong><p>{t("localDescription")}</p></div></div>
       <a className="hub-link" href="https://atrishub.com" target="_blank" rel="noreferrer">AtrisHub <ArrowUpRight size={14} /></a>
     </aside>
 

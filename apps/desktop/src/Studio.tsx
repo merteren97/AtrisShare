@@ -2,7 +2,10 @@ import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 
 import * as Dialog from "@radix-ui/react-dialog";
 import { ArrowDownToLine, Check, CircleAlert, Clapperboard, ExternalLink, FileVideo, Film, FolderOpen, Link2, LoaderCircle, Plus, RefreshCw, Scissors, ShieldCheck, Sparkles, Upload, X } from "lucide-react";
 import type { WorkspaceAccount, WorkspaceContext } from "../../../packages/domain/src/workspace.js";
-import { binaryRequest, mediaBlob, request } from "./api";
+import { isTauri } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { mediaBlob, request } from "./api";
+import { importMedia, importName, type ImportEntry, type ImportSource } from "./media-import";
 import { studioError, studioText, type StudioLanguage, type StudioTranslate } from "./studio-i18n";
 import { EditPanel } from "./TimelineEditor";
 import { AssistantPanel } from "./AssistantPanel";
@@ -65,6 +68,10 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   const [importing, setImporting] = useState(false);
+  const [imports, setImports] = useState<ImportEntry[]>([]);
+  const [dragging, setDragging] = useState(false);
+  const dropDepth = useRef(0);
+  const importHandler = useRef<(sources: ImportSource[]) => void>(() => {});
   const [refreshing, setRefreshing] = useState(false);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [error, setError] = useState<unknown>(null);
@@ -137,18 +144,51 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
     setSnapshot(current => current ? { ...current, renders: upsert(current.renders, value) } : current);
   }
   function selectArtifact(id: string) { setSelectedId(id); setTab("media"); }
-  function importFile(file: File) {
+  function importFiles(sources: ImportSource[]) {
+    if (!sources.length || !snapshot || busyRef.current) return;
+    window.dispatchEvent(new Event("atris-share:work-started"));
     void act(async signal => {
       setImporting(true);
+      const entries: ImportEntry[] = sources.map(source => ({ name: importName(source), state: "queued" }));
+      setImports([...entries]);
       try {
-        const artifact = await binaryRequest<StudioArtifact>(`/api/media/import?${baseQuery}&filename=${encodeURIComponent(file.name)}`, file, signal);
-        if (signal.aborted) return;
-        setSnapshot(current => current ? { ...current, artifacts: upsert(current.artifacts, artifact) } : current);
-        setSelectedId(artifact.id); setTab("media"); setNotice("imported");
+        let firstId: string | null = null;
+        for (const [index, source] of sources.entries()) {
+          if (signal.aborted) return;
+          entries[index] = { name: importName(source), state: "importing" }; setImports([...entries]);
+          try {
+            const artifact = await importMedia(source, context, signal);
+            if (signal.aborted) return;
+            setSnapshot(current => current ? { ...current, artifacts: upsert(current.artifacts, artifact) } : current);
+            firstId ??= artifact.id;
+            entries[index] = { name: importName(source), state: "imported" };
+          } catch (failure) {
+            if (signal.aborted) return;
+            entries[index] = { name: importName(source), state: "failed", error: failure };
+          }
+          setImports([...entries]);
+        }
+        if (firstId) { setSelectedId(firstId); setTab("media"); }
         await refresh();
       } finally { if (!signal.aborted) setImporting(false); }
     });
   }
+  importHandler.current = importFiles;
+  useEffect(() => {
+    let cancelled = false, dispose: (() => void) | undefined;
+    // Tauri intercepts OS file drops; DOM dataTransfer.files is empty on WebView2.
+    if (isTauri()) void getCurrentWebview().onDragDropEvent(({ payload }) => {
+      if (cancelled) return;
+      if (payload.type === "enter" || payload.type === "over") setDragging(true);
+      else {
+        setDragging(false);
+        if (payload.type === "drop") importHandler.current(payload.paths);
+      }
+    }).then(unlisten => { if (cancelled) unlisten(); else dispose = unlisten; }).catch(() => { /* DOM picker stays available. */ });
+    const reset = () => { dropDepth.current = 0; setDragging(false); };
+    window.addEventListener("blur", reset);
+    return () => { cancelled = true; dispose?.(); window.removeEventListener("blur", reset); };
+  }, []);
   function download(artifact: StudioArtifact) {
     if (artifact.bytes > BLOB_LIMIT) return;
     void act(async signal => {
@@ -184,12 +224,17 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
   const proxyJob = snapshot?.renders.find(item => item.sourceId === selected?.id && item.kind === "proxy" && item.state === "running");
   const seekSource = (seconds: number) => { if (selected) setSeek(current => ({ artifactId: selected.id, seconds, sequence: (current?.sequence ?? 0) + 1 })); };
 
-  return <div className="studio">
+  return <div className="studio" data-update-blocked={busy || pending}
+    onDragEnter={event => { if (!event.dataTransfer.types.includes("Files")) return; event.preventDefault(); dropDepth.current++; setDragging(true); }}
+    onDragOver={event => { if (!event.dataTransfer.types.includes("Files")) return; event.preventDefault(); event.dataTransfer.dropEffect = busy || !snapshot ? "none" : "copy"; }}
+    onDragLeave={event => { event.preventDefault(); if (--dropDepth.current <= 0) { dropDepth.current = 0; setDragging(false); } }}
+    onDrop={event => { event.preventDefault(); dropDepth.current = 0; setDragging(false); importFiles(Array.from(event.dataTransfer.files)); }}>
+    {dragging && <div className="studio-drop-overlay" role="status"><div className="studio-drop-card"><span className="studio-drop-icon"><Upload size={32} /></span><strong>{t(busy || !snapshot ? "dropBusy" : "dropTitle")}</strong><p>{t("dropHelp")}</p></div></div>}
     <header className="studio-heading">
       <div><p className="eyebrow">{t("studio")}</p><h1>{projectName ?? t("studioTitle")}</h1></div>
       <div className="studio-heading-actions"><span className="studio-count">{snapshot ? snapshot.artifacts.length : "—"} {t(snapshot?.artifacts.length === 1 ? "mediaCountOne" : "mediaCount")}</span>
         <button className="button primary" disabled={busy || !snapshot} onClick={() => input.current?.click()}>{importing ? <LoaderCircle size={16} className="spinning" /> : <Plus size={16} />}{t(importing ? "importing" : "import")}</button>
-        <input ref={input} className="studio-file-input" type="file" accept=".mp4,.mov,.webm,.mkv" aria-label={t("import")} onChange={event => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) importFile(file); }} />
+        <input ref={input} className="studio-file-input" type="file" multiple accept=".mp4,.mov,.webm,.mkv" aria-label={t("import")} onChange={event => { const files = Array.from(event.currentTarget.files ?? []); event.currentTarget.value = ""; importFiles(files); }} />
       </div>
     </header>
     <div className="studio-nav"><div className="studio-tabs" role="tablist" aria-label={t("studio")}>
@@ -200,6 +245,11 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
     {!!loadError && <div className="studio-alert" role="alert"><CircleAlert size={16} /><span>{translateError(loadError)}</span><button className="text-button" disabled={refreshing || busy} onClick={() => { void refresh(); }}>{t("retry")}</button></div>}
     {!!error && !approval && <div className="studio-alert" role="alert"><CircleAlert size={16} /><span>{translateError(error)}</span><button className="icon-button" onClick={() => setError(null)} aria-label={t("close")}><X size={14} /></button></div>}
     {notice && <p className="studio-notice" role="status"><Check size={14} />{t(notice)}</p>}
+    {!!imports.length && <section className="studio-imports" aria-label={t("importQueue")} aria-busy={importing}>
+      <div className="studio-import-heading"><strong role="status">{t(importing ? "importing" : "importFinished")} · {imports.filter(item => item.state === "imported").length}/{imports.length}</strong>{!importing && <button className="icon-button" onClick={() => setImports([])} aria-label={t("close")}><X size={14} /></button>}</div>
+      <progress max={imports.length} value={imports.filter(item => item.state === "imported" || item.state === "failed").length} aria-label={t("importQueue")} />
+      <ul>{imports.map((item, index) => <li key={index} data-state={item.state}>{item.state === "importing" ? <LoaderCircle size={14} className="spinning" /> : item.state === "imported" ? <Check size={14} /> : item.state === "failed" ? <CircleAlert size={14} /> : <FileVideo size={14} />}<span title={item.name}>{item.name}</span><small>{item.state === "failed" ? translateError(item.error) : t(item.state)}</small></li>)}</ul>
+    </section>}
     {!snapshot ? !loadError && <div className="loading-state" role="status"><LoaderCircle className="spinning" />{t("loading")}</div> : <>
       {!snapshot.tools.available && <div className="studio-callout studio-tools-callout"><div><strong>{t("toolsMissing")}</strong><p>{t("toolsHelp")}</p></div>{onToolSettings && <button className="button secondary" onClick={onToolSettings}>{t("toolSettings")}</button>}</div>}
       <section role="tabpanel" id={`${uniqueId}-panel-media`} aria-labelledby={`${uniqueId}-media`} hidden={tab !== "media"}>
@@ -225,7 +275,7 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
                 <button className="icon-button" aria-label={t("download")} title={t("download")} disabled={busy || selected.bytes > BLOB_LIMIT} onClick={() => download(selected)}><ArrowDownToLine size={17} /></button></div>
               <details className="studio-file-details"><summary>{t("hash")}</summary><code>{selected.sha256}</code></details>
               {snapshot.renders.some(item => item.sourceId === selected.id && item.kind !== "preview") && <details className="studio-render-details" open={snapshot.renders.some(item => item.sourceId === selected.id && item.kind !== "preview" && item.state === "running") || undefined}><summary>{t("renderJobs")} <span className="count">{snapshot.renders.filter(item => item.sourceId === selected.id && item.kind !== "preview").length}</span></summary><RenderList renders={snapshot.renders.filter(item => item.sourceId === selected.id && item.kind !== "preview")} artifacts={snapshot.artifacts} t={t} busy={busy} errorText={translateError} open={selectArtifact} cancel={item => { void act(async signal => { const value = await request<StudioRender>(`/api/renders/${encodeURIComponent(item.id)}/cancel`, "POST", { context: scope }, signal); if (!signal.aborted) updateRender(value); }); }} /></details>}
-            </> : <div className="studio-preview-empty"><div className="studio-empty-frame"><Clapperboard size={38} strokeWidth={1.2} /></div><h2>{t(snapshot.artifacts.length ? "selectMedia" : "emptyLibrary")}</h2><p>{t(snapshot.artifacts.length ? "selectMediaHelp" : "emptyLibraryHelp")}</p>{!snapshot.artifacts.length && <button className="button secondary" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} />{t("import")}</button>}</div>}
+            </> : <div className="studio-preview-empty"><div className="studio-empty-frame"><Clapperboard size={38} strokeWidth={1.2} /></div><h2>{t(snapshot.artifacts.length ? "selectMedia" : "emptyLibrary")}</h2><p>{t(snapshot.artifacts.length ? "selectMediaHelp" : "emptyLibraryHelp")}</p>{!snapshot.artifacts.length && <><button className="button secondary" disabled={busy} onClick={() => input.current?.click()}><Upload size={15} />{t("import")}</button><small className="studio-drop-hint">{t("dropHint")}</small></>}</div>}
           </div>
           <aside className="studio-inspector">{selected ? <>
             <div role="tabpanel" id={`${uniqueId}-inspector-publish`} aria-labelledby={`${uniqueId}-publish`} hidden={inspector !== "publish"}><PublishForm key={selected.id} artifact={selected} account={account} t={t} busy={busy} connected={connected} submit={fields => {

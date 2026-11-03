@@ -1,6 +1,8 @@
 export type StudioLanguage = "tr" | "en";
 
 const en = {
+  dropTitle: "Drop videos to import", dropHelp: "MP4, MOV, WebM, MKV · multiple files supported", dropHint: "or drag and drop videos here", dropBusy: "Wait for the current operation to finish",
+  importQueue: "Video imports", importFinished: "Import complete", queued: "Waiting",
   toolSettings: "Open video tool settings",
   editingMode: "Non-destructive editing", clipsMode: "Find and refine short clips", assistantMode: "Review AI edit proposals", publishMode: "Prepare a YouTube publication",
   clips: "Clips", framing: "Horizontal framing · left → right",
@@ -49,6 +51,8 @@ const en = {
 
 type StudioTextKey = keyof typeof en;
 const tr: Record<StudioTextKey, string> = {
+  dropTitle: "İçe aktarmak için videoları bırakın", dropHelp: "MP4, MOV, WebM, MKV · birden fazla dosya bırakabilirsiniz", dropHint: "veya videoları buraya sürükleyip bırakın", dropBusy: "Devam eden işlemin bitmesini bekleyin",
+  importQueue: "Video aktarımları", importFinished: "Aktarım tamamlandı", queued: "Bekliyor",
   toolSettings: "Video araç ayarlarını aç",
   editingMode: "Kaynağı koruyan düzenleme", clipsMode: "Kısa klipleri bul ve düzenle", assistantMode: "AI kurgu önerilerini incele", publishMode: "YouTube yayını hazırla",
   clips: "Klipler", framing: "Yatay kadraj · sol → sağ",

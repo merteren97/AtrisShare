@@ -1,0 +1,5 @@
+.app-updater { position: fixed; right: 20px; bottom: 40px; z-index: 50; width: min(390px, calc(100vw - 40px)); background: var(--surface); color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 16px; box-shadow: 0 8px 32px #0003; }
+.app-updater > div:first-child { display: flex; align-items: center; gap: 10px; font-size: 12px; line-height: 1.6; }
+.app-updater svg { flex-shrink: 0; color: var(--accent); }
+.app-updater p { font-size: 11px; line-height: 1.8; color: var(--muted); margin-top: 9px; }
+.app-updater-actions { display: flex; align-items: center; gap: 14px; margin-top: 12px; }

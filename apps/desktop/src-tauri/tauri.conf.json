@@ -21,12 +21,19 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": false,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "licenseFile": "runtime/LICENSE.txt",
     "resources": { "runtime/": "runtime/" },
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.icns", "icons/icon.ico"],
     "shortDescription": "Local social workspace — developer preview",
     "category": "Productivity"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDU4NDU1RDdCQzQxNjQ0QTAKUldTZ1JCYkVlMTFGV1A1Ym43TW5JZzhtb2xVUndOdGs2T1RXdDJhNXF2cWduckZ3Z2RnMHIxblIK",
+      "endpoints": ["https://github.com/merteren97/AtrisShare/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
   }
 }

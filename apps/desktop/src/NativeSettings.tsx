@@ -5,6 +5,7 @@ import {
   type NativeDesktopSettings, type NativeNotificationPermission
 } from "./native-desktop";
 import "./native-desktop.css";
+import { UpdateSettings } from "./AppUpdater";
 
 const copy = {
   en: {
@@ -89,7 +90,7 @@ export function NativeSettings({ language }: { language: "tr" | "en" }) {
 
   const native = settings?.native ?? false;
   const permissionLabel = permission === "granted" ? t.granted : permission === "denied" ? t.denied : permission === "unavailable" ? t.unavailable : t.prompt;
-  return <section className="panel native-settings" aria-labelledby={`${id}-title`} aria-busy={loading || busy} lang={language}>
+  return <><UpdateSettings language={language} /><section className="panel native-settings" aria-labelledby={`${id}-title`} aria-busy={loading || busy} lang={language}>
     <header className="native-settings__heading"><Monitor size={18} aria-hidden="true" /><div><h2 id={`${id}-title`}>{t.title}</h2><p>{t.description}</p></div></header>
     {loading ? <p className="native-settings__status" role="status"><LoaderCircle size={15} className="spinning" aria-hidden="true" />{t.loading}</p> : <>
       {settings && !native && <p className="native-settings__help">{t.web}</p>}
@@ -109,5 +110,5 @@ export function NativeSettings({ language }: { language: "tr" | "en" }) {
           <button type="button" className="button secondary" disabled={busy} onClick={() => { void load(); }}>{t.check}</button></div>}
       </div>
     </>}
-  </section>;
+  </section></>;
 }

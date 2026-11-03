@@ -83,6 +83,10 @@ source version. Versions are not automatically incremented. Manual versions upda
 all build-workspace version sources; existing version tags cannot be overwritten.
 See [manual release instructions](docs/PACKAGING.md#manual-github-release).
 
+The editor supports multiple videos through the file picker or an animated drag-and-drop
+target. Release builds check for signed GitHub updates automatically. Configure the
+release signing secret once before publishing; see [automatic updates](docs/UPDATES.md).
+
 ## Workflow
 
 1. Connect one or more accounts and select the exact channel/profile destination.
