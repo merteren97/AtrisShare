@@ -9,6 +9,8 @@ import { z } from "zod";
 import { editSchema } from "../../domain/src/media.js";
 import type { MediaEdit } from "../../domain/src/media.js";
 import { clipRankingSchema } from "../../domain/src/clips.js";
+import type { AiDiagnostic } from "../../domain/src/ai.js";
+import { AiBridgeError, classifyCliFailure, errorCategory, safeAiError } from "./diagnostics.js";
 
 // Independent one-shot port. Runtime-host reuse research: AtrisAgent's discovery,
 // events and cancellation boundary; no sibling source/dependency is required.
@@ -30,9 +32,9 @@ const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/[A-Za-z0-9][A-Za-z0-9._:/@+-]{
 const CATALOG_MODEL = /^[A-Za-z0-9@~][A-Za-z0-9._:/@+~-]{0,255}$/u;
 const proposalSchema = z.object({ summary: z.string().min(1).max(2000), edit: editSchema }).strict();
 type CatalogStatus = { state: "current" | "stale"; refreshedAt: string | null };
-type Discovery = { available: boolean; version: string | null; models: string[]; auth: "cli-managed"; error: string | null; catalog?: CatalogStatus };
+type Discovery = { available: boolean; version: string | null; models: string[]; auth: "cli-managed"; error: string | null; catalog?: CatalogStatus; profileId?: string };
 type Snapshot = { schemaVersion: 1; executable: string; version: string; refreshedAt: string; catalog: Record<string, unknown>; models: string[] };
-type PreflightState = { version: string | null; snapshot?: Snapshot | undefined };
+type PreflightState = { version: string | null; snapshot?: Snapshot | undefined; stage?: AiDiagnostic["stage"]; profileId?: string };
 type Event = { type: "started" | "activity"; message: string };
 type Workspace = { cwd: string; env: NodeJS.ProcessEnv; signal: AbortSignal };
 // Serialize publication across bridge instances in this process, too. Each caller
@@ -61,11 +63,7 @@ function noTools(value: unknown): boolean {
 function parseJSON(text: string, code = "ai_protocol_error"): unknown {
   try { return JSON.parse(text); } catch { return fail(code); }
 }
-function safeError(error: unknown): string {
-  if (error instanceof Error && /^ai_[a-z_]+$/u.test(error.message)) return error.message;
-  if (error instanceof Error && error.name === "AbortError") return "ai_cancelled";
-  return "ai_process_failed";
-}
+const safeError = safeAiError;
 function executablePath(value: string): string {
   if (typeof value !== "string" || !isAbsolute(value) || /[\u0000-\u001f\u007f]/u.test(value)
     || (process.platform === "win32" && (extname(value).toLowerCase() !== ".exe" || !/^[a-z]:[\\/]/iu.test(value)))) {
@@ -195,7 +193,7 @@ async function command(spawn: typeof nodeSpawn, executable: string, args: string
       return;
     }
     const decoder = new TextDecoder("utf-8", { fatal: true });
-    let output = "", pending = "", stdoutBytes = 0, stderrBytes = 0;
+    let output = "", pending = "", stderr = "", stdoutBytes = 0, stderrBytes = 0;
     let failure: Error | undefined;
     let killing: Promise<void> | undefined;
     const stop = (error: Error) => {
@@ -224,6 +222,7 @@ async function command(spawn: typeof nodeSpawn, executable: string, args: string
     child.stderr?.on("data", (chunk: Buffer) => {
       stderrBytes += chunk.length;
       if (stderrBytes > MAX_STDERR) stop(new Error("ai_output_limit"));
+      else stderr += chunk.toString("utf8");
     });
     child.stdout?.on("error", () => stop(new Error("ai_process_failed")));
     child.stderr?.on("error", () => stop(new Error("ai_process_failed")));
@@ -240,7 +239,7 @@ async function command(spawn: typeof nodeSpawn, executable: string, args: string
           } catch (error) { failure = new Error(safeError(error) === "ai_process_failed" ? "ai_protocol_error" : safeError(error)); }
         }
         if (failure) reject(failure);
-        else if (code !== 0 || signal) reject(new Error("ai_process_failed"));
+        else if (code !== 0 || signal) reject(new AiBridgeError(classifyCliFailure(stderr), code));
         else resolve(output);
       })().catch(() => reject(new Error("ai_process_failed")));
     });
@@ -299,7 +298,14 @@ function protocol<T>(onEvent: (event: Event) => void, schema: z.ZodType<T>) {
     line(line: string) {
       const event = parseJSON(line);
       if (!record(event) || typeof event.type !== "string") fail("ai_protocol_error");
-      if (event.type === "tool_use" || event.type === "error") fail("ai_protocol_error");
+      if (event.type === "tool_use") fail("ai_protocol_error");
+      if (event.type === "error") {
+        const error = record(event.error) ? event.error : {};
+        const data = record(error.data) ? error.data : {};
+        // Only known error fields are inspected, never serialized as diagnostics.
+        const fields = [error.name, error.message, data.message, data.statusCode].filter(v => typeof v === "string" || typeof v === "number");
+        fail(classifyCliFailure(fields.join(" "), "ai_protocol_error"));
+      }
       if (typeof event.sessionID !== "string" || !/^ses_[A-Za-z0-9_-]{1,200}$/u.test(event.sessionID)) fail("ai_protocol_error");
       if (sessionId !== null && sessionId !== event.sessionID) fail("ai_protocol_error");
       sessionId = event.sessionID;
@@ -420,6 +426,7 @@ export class OpenCodeBridge {
       return result;
     } catch (error) {
       if (error instanceof Error && error.name === "AbortError") throw new DOMException("ai_cancelled", "AbortError");
+      if (error instanceof AiBridgeError) throw error;
       throw new Error(safeError(error));
     } finally {
       clearTimeout(timer);
@@ -516,10 +523,13 @@ export class OpenCodeBridge {
   private async preflight(workspace: Workspace, executable: string, state: PreflightState,
     discover = false, refresh = false): Promise<{ version: string; models: string[] }> {
     const run = (args: string[]) => command(this.spawn, executable, [...args, "--pure"], workspace);
+    state.stage = "version";
     const version = (await run(["--version"])).trim();
     if (openCodeVersionSchema.safeParse(version).success) state.version = version;
     // These isolation/effective-agent semantics were verified against this CLI.
     if (state.version !== SUPPORTED_VERSION) fail("ai_version_unsupported");
+    state.profileId = createHash("sha256").update(JSON.stringify([executable, SUPPORTED_VERSION, workspace.env.XDG_DATA_HOME, "isolated-official-auth-v1"])).digest("hex");
+    state.stage = "configuration";
     try {
       verifyConfig(await run(["debug", "config"]));
       verifyAgent(await run(["debug", "agent", AGENT]));
@@ -527,6 +537,7 @@ export class OpenCodeBridge {
       if (["ai_cancelled", "ai_timeout", "ai_output_limit", "ai_unavailable"].includes(safeError(error))) throw error;
       fail("ai_configuration_unsafe");
     }
+    state.stage = "catalog";
     if (this.catalogDirectory !== undefined || refresh || this.snapshot !== undefined) {
       const result = await this.catalogSnapshot(workspace, executable, version, state, discover, refresh);
       if (result.models) return { version, models: result.models };
@@ -540,14 +551,20 @@ export class OpenCodeBridge {
     try {
       const result = await this.isolated(signal, (workspace, executable) => this.preflight(workspace, executable, state, true, options?.refresh === true));
       return { available: true, ...result, models: [...result.models], auth: "cli-managed", error: null,
+        ...(state.profileId ? { profileId: state.profileId } : {}),
         ...(this.catalogDirectory !== undefined ? { catalog: { state: state.snapshot && Date.now() - Date.parse(state.snapshot.refreshedAt) < CATALOG_TTL ? "current" as const : "stale" as const,
           refreshedAt: state.snapshot?.refreshedAt ?? null } } : {}) };
     } catch (error) {
       return { available: false, version: state.version, models: [...(state.snapshot?.models ?? [])], auth: "cli-managed", error: safeError(error),
+        ...(state.profileId ? { profileId: state.profileId } : {}),
         ...(this.catalogDirectory !== undefined ? { catalog: { state: "stale" as const, refreshedAt: state.snapshot?.refreshedAt ?? null } } : {}) };
     }
   }
 
+  async proposeSequence(input: { model: string; prompt: string }, signal: AbortSignal) {
+    const { sequenceOperationSchema } = await import("../../domain/src/sequence.js");
+    return this.complete(input, () => {}, signal, z.object({ summary: z.string().min(1).max(2000), operations: z.array(sequenceOperationSchema).min(1).max(128) }).strict());
+  }
   async propose(input: { model: string; prompt: string }, onEvent: (event: Event) => void,
     signal: AbortSignal): Promise<{ summary: string; edit: MediaEdit; sessionId: string | null }> {
     return this.complete(input, onEvent, signal, proposalSchema);
@@ -557,19 +574,40 @@ export class OpenCodeBridge {
     return this.complete(input, () => {}, signal, clipRankingSchema);
   }
 
+  /** Explicit user action only. No workspace, memory, media or transcript is sent. */
+  async testConnection(model: string, signal: AbortSignal, requestId: string = randomUUID()) {
+    const state: PreflightState = { version: null, stage: "discovery" }, started = Date.now();
+    const diagnostic = (category: AiDiagnostic["category"], exitCode: number | null): AiDiagnostic => ({
+      stage: state.stage ?? "discovery", category, exitCode, durationMs: Date.now() - started, requestId, version: state.version,
+    });
+    try {
+      await this.complete({ model, prompt: 'Connection test only. Do not use tools. Return exactly {"ok":true} as JSON, without any other text.' }, () => {}, signal,
+        z.object({ ok: z.literal(true) }).strict(), state);
+      return { profileId: state.profileId!, version: state.version!, diagnostic: diagnostic("none", 0) };
+    } catch (error) {
+      const code = safeError(error);
+      throw new AiBridgeError(code, error instanceof AiBridgeError ? error.exitCode : null,
+        diagnostic(errorCategory(code), error instanceof AiBridgeError ? error.exitCode : null));
+    }
+  }
+
   private async complete<T>(input: { model: string; prompt: string }, onEvent: (event: Event) => void,
-    signal: AbortSignal, schema: z.ZodType<T>): Promise<T & { sessionId: string | null }> {
+    signal: AbortSignal, schema: z.ZodType<T>, state: PreflightState = { version: null }): Promise<T & { sessionId: string | null }> {
     if (!input || typeof input.model !== "string" || !MODEL.test(input.model) || typeof input.prompt !== "string"
       || !input.prompt.trim() || input.prompt.includes("\0") || Buffer.byteLength(input.prompt, "utf8") > 128 * 1024) fail("ai_invalid_input");
     return this.isolated(signal, async (workspace, executable) => {
-      const { models } = await this.preflight(workspace, executable, { version: null });
+      const { models } = await this.preflight(workspace, executable, state);
       if (!models.includes(input.model)) fail("ai_model_unavailable");
       check(workspace.signal);
       onEvent({ type: "started", message: "Starting proposal" });
+      state.stage = "inference";
       const events = protocol(onEvent, schema);
       await command(this.spawn, executable, ["run", "--pure", "--format", "json", "--model", input.model,
-        "--agent", AGENT, "--title", "AtrisShare proposal"], workspace, input.prompt, line => events.line(line));
+        "--agent", AGENT, "--title", "AtrisShare proposal"], workspace, input.prompt, line => {
+          state.stage = "protocol"; events.line(line); state.stage = "inference";
+        });
       check(workspace.signal);
+      state.stage = "protocol";
       return events.result();
     });
   }

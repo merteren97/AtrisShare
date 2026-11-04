@@ -73,6 +73,15 @@ available. Live-provider and clean-install acceptance remains Phase 9; packaging
 does not authorize release. See [scheduling](docs/SCHEDULING.md),
 [social setup](docs/SOCIAL.md), [data](docs/DATA.md) and [packaging](docs/PACKAGING.md).
 
+## Project-level video sequences
+
+The editor now supports ordered multi-source montage, repeated source ranges,
+timeline trim/split/reorder/duplicate, durable batch undo/redo, rendered sequence
+preview and one MP4 export. AI proposals use the same operations and require human
+acceptance. Projects can be renamed, edited, moved to trash and restored. Explicit
+CLI connection tests distinguish a model catalog from successful inference; native
+output saves stream to disk. See [workflow, limits and API](docs/SEQUENCES.md).
+
 ## Desktop installers
 
 GitHub Actions **Desktop release → Run workflow** builds Windows x64 NSIS `.exe`

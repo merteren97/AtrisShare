@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { startApi } from "../dist/services/local-api/src/server.js";
 import { WorkspaceStore } from "../dist/packages/storage/src/store.js";
 import { randomUUID } from "node:crypto";
+import { projectRoute } from "../dist/services/local-api/src/project-routes.js";
 
 async function fixture(t) {
   const directory = await mkdtemp(join(tmpdir(), "atris-share-api-"));
@@ -146,4 +147,54 @@ test("video tool settings reject arbitrary commands and persist an explicit PATH
     assert.equal(restored.ffmpegPath, ""); assert.equal(restored.ffprobePath, "");
     assert.equal(restored.configurationError, false); assert.equal(restored.restartRequired, false);
   } finally { await restarted.close(); }
+});
+
+test("project route helper validates revisions and scope for update/trash/restore", async t => {
+  const store = new WorkspaceStore(":memory:"); t.after(() => store.close());
+  const a = store.createAccount({ displayName: "Local", platform: "local" }), b = store.createAccount({ displayName: "Other", platform: "local" });
+  const route = (method, path, input) => projectRoute(store, method, new URL(path, "http://127.0.0.1"), async () => input);
+  const created = await route("POST", "/api/projects", { accountId: a.id, name: "Original", description: "Keep" });
+  assert.equal(created.status, 201); const p = created.body, context = { accountId: a.id, projectId: p.id };
+  const patch = { context, expectedRevision: 1, name: "Renamed", description: "Updated" };
+  const updated = await route("PATCH", `/api/projects/${p.id}`, patch);
+  assert.equal(updated.body.name, "Renamed"); assert.equal(updated.body.revision, 2);
+  await assert.rejects(route("PATCH", `/api/projects/${p.id}`, patch), /revision_conflict/);
+  await assert.rejects(route("PATCH", `/api/projects/${p.id}`, { ...patch, expectedRevision: 2, context: { accountId: b.id, projectId: p.id } }), /project_not_found/);
+  await assert.rejects(route("DELETE", `/api/projects/${p.id}`, { context, expectedRevision: 0 }));
+  await assert.rejects(route("GET", `/api/projects?accountId=${a.id}&state=all`));
+  const deleted = await route("DELETE", `/api/projects/${p.id}`, { context, expectedRevision: 2 });
+  assert.ok(deleted.body.deletedAt); assert.equal(deleted.body.revision, 3);
+  assert.deepEqual((await route("GET", `/api/projects?accountId=${a.id}`)).body, []);
+  assert.equal((await route("GET", `/api/projects?accountId=${a.id}&state=trashed`)).body[0].id, p.id);
+  await assert.rejects(route("POST", `/api/projects/${p.id}/restore`, { context, expectedRevision: 2 }), /revision_conflict/);
+  const restored = await route("POST", `/api/projects/${p.id}/restore`, { context, expectedRevision: 3 });
+  assert.equal(restored.body.deletedAt, null); assert.equal(restored.body.revision, 4); assert.equal(restored.body.description, "Updated");
+  assert.equal(await route("GET", "/api/unrelated"), null);
+});
+
+test("running API rejects deleted project scope across studio/AI/render/transcription/queue", async t => {
+  const { call } = await fixture(t);
+  const a = await (await call("/api/accounts", { method: "POST", body: JSON.stringify({ displayName: "Lifecycle", platform: "local" }) })).json();
+  const p = await (await call("/api/projects", { method: "POST", body: JSON.stringify({ accountId: a.id, name: "Trash me", description: "" }) })).json();
+  const context = { accountId: a.id, projectId: p.id }, artifactId = randomUUID();
+  await call("/api/context", { method: "PUT", body: JSON.stringify(context) });
+  const state = await (await call("/api/workspace")).json(), writer = new WorkspaceStore(join(state.dataDirectory, "atris-share.sqlite"));
+  // The server owner mounts projectRoute; exercise the shared-store boundary in
+  // the real HTTP runtime independently of that integration step.
+  try { writer.trashProject(p.id, { context, expectedRevision: 1 }); } finally { writer.close(); }
+  const query = new URLSearchParams(context);
+  for (const path of [`/api/studio?${query}`, `/api/memory?${query}`, `/api/queue?${query}`, `/api/ai/runs?${query}&artifactId=${artifactId}`, `/api/media/${artifactId}/transcript?${query}`]) {
+    const response = await call(path); assert.equal(response.status, 404, path); assert.equal((await response.json()).error, "context_not_found", path);
+  }
+  for (const [path, extra] of [["/api/context", {}], [`/api/media/${artifactId}/render`, { expectedRevision: 0 }], [`/api/media/${artifactId}/proxy`, {}], [`/api/media/${artifactId}/transcribe`, {}]]) {
+    const response = await call(path, { method: path === "/api/context" ? "PUT" : "POST", body: JSON.stringify(path === "/api/context" ? context : { context, ...extra }) });
+    assert.equal(response.status, 404, path); assert.equal((await response.json()).error, "context_not_found", path);
+  }
+  for (const [path, body] of [["/api/ai/grants", { context, destinationId: a.destinationId, artifactId, includeMemory: false }],
+    ["/api/ai/runs", { context, destinationId: a.destinationId, artifactId, model: "controlled/model", prompt: "Never sent", includeMemory: false, allowRemote: true }]]) {
+    const response = await call(path, { method: "POST", body: JSON.stringify(body) });
+    assert.equal(response.status, 404, path); assert.equal((await response.json()).error, "context_not_found", path);
+  }
+  const snapshot = await (await call("/api/workspace")).json();
+  assert.deepEqual(snapshot.context, { accountId: a.id, projectId: null }); assert.deepEqual(snapshot.projects, []);
 });

@@ -18,6 +18,7 @@ export interface StudioArtifact {
   kind?: "source" | "export" | "proxy" | "preview";
   proxyId?: string | null;
   sourceSha256?: string;
+  sequence?: { id: string; revision: number; digest: string; sources: { id: string; sha256: string }[] };
 }
 export interface PublicationPayload {
   version: 1; accountId: string; projectId: string; destinationId: string; artifactId: string; sha256: string;

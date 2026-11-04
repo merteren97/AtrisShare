@@ -20,6 +20,7 @@ do not record credentials, grants, raw provider bodies or private speech in evid
 
 | Done | Feature phase | Phase 9 scenarios / expected evidence |
 | --- | --- | --- |
+| [ ] | Project sequence extension | Three real sources plus a repeated A range; ordered append, edge trim, playhead split, gap/ripple delete, drag/button reorder, one-batch AI preview/accept/undo/redo, stale-proposal rejection, one MP4, unchanged hashes, restart, rename/info revision conflict, trash/restore, stopped jobs and invalidated grants. Test the selected provider/model connection in the installed Windows app. Include VFR/rotation/SAR/offset audio, native streamed save and TR/EN/theme/window/DPI checks. |
 | [ ] | 0 — foundation | Standalone clean checkout, documented prerequisites, build/manifest, public docs/support matrix and dependency/license inventory agree with delivered features. |
 | [ ] | 1 — workspace | Native startup; demo vs connected identity; account/project create/select/reopen; scoped memory CRUD, provenance, suggested/confirmed state, revision conflicts and isolation across accounts/projects. Restart preserves state. |
 | [ ] | 2 — Google app setup | Real user-owned **Desktop app** client ID and optional secret saved via Accounts; readiness changes immediately and persists after restart. Local encrypted reserved vault record takes precedence over environment fallback. No credential readback, logs or browser storage. Active-session/configuration races fail safely. Existing account grants retain their original client configuration. |

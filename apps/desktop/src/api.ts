@@ -1,5 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import type { RuntimeConfig } from "../../../packages/domain/src/workspace.js";
+import type { WorkspaceContext } from "../../../packages/domain/src/workspace.js";
 
 export class ApiError extends Error {
   constructor(public readonly code: string) { super(code); }
@@ -44,4 +45,20 @@ export async function mediaBlob(path: string, signal?: AbortSignal): Promise<Blo
   const response = await fetch(`${config.origin}${path}`, { headers: { Authorization: `Bearer ${config.token}` }, cache: "no-store", ...(signal ? { signal } : {}) });
   if (!response.ok) { const value = await response.json().catch(() => ({})) as {error?:string}; throw new ApiError(value.error ?? "operation_failed"); }
   return response.blob();
+}
+/** Native save streams directly to disk; browser streaming uses File System Access when present. */
+export async function saveMedia(artifactId: string, context: WorkspaceContext, filename: string, signal?: AbortSignal): Promise<void> {
+  if (isTauri()) { await invoke("native_save_media",{artifactId,accountId:context.accountId,projectId:context.projectId,filename}); return; }
+  type Writable = {write:(chunk:Uint8Array)=>Promise<void>;close:()=>Promise<void>;abort:()=>Promise<void>};
+  type PickerWindow = Window & {showSaveFilePicker?: (options:{suggestedName:string;types:{description:string;accept:Record<string,string[]>}[]})=>Promise<{createWritable:()=>Promise<Writable>}>};
+  const picker=(window as PickerWindow).showSaveFilePicker;
+  // Open the picker before the first await that follows the user gesture.
+  const handle=picker?await picker({suggestedName:filename,types:[{description:"MP4 video",accept:{"video/mp4":[".mp4"]}}]}):null;
+  runtime ??= bootstrap(); const config = await runtime;
+  const q=new URLSearchParams({accountId:context.accountId,projectId:context.projectId??""});
+  const response=await fetch(`${config.origin}/api/media/${encodeURIComponent(artifactId)}/download?${q}`,{headers:{Authorization:`Bearer ${config.token}`},...(signal?{signal}:{})});
+  if(!response.ok) {const value=await response.json().catch(()=>({})) as {error?:string};throw new ApiError(value.error??"operation_failed");}
+  if(handle&&response.body){const writable=await handle.createWritable(),reader=response.body.getReader();try{while(true){const {done,value}=await reader.read();if(done)break;await writable.write(value);}await writable.close();}catch(e){await writable.abort().catch(()=>{});throw e;}finally{await reader.cancel().catch(()=>{});}return;}
+  if(Number(response.headers.get("content-length"))>256*1024**2){void response.body?.cancel();throw new ApiError("studio_blob_limit");}
+  const url=URL.createObjectURL(await response.blob()),anchor=document.createElement("a");anchor.href=url;anchor.download=filename;anchor.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 }

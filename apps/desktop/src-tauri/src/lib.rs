@@ -1,5 +1,6 @@
 mod desktop;
 mod media_import;
+mod media_save;
 mod runtime;
 mod updater;
 
@@ -20,11 +21,13 @@ fn runtime_config(
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updater::UpdateState::default())
         .invoke_handler(tauri::generate_handler![
             runtime_config,
             media_import::native_import_media,
+            media_save::native_save_media,
             updater::native_prepare_update,
             updater::native_install_update,
             desktop::native_desktop_settings,

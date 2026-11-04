@@ -19,6 +19,11 @@ See [local workspace details](LOCAL-WORKSPACE.md) and [YouTube](YOUTUBE.md).
 
 ## Local-first application
 
+The project-level sequence extension adds integer-frame clip instances, durable
+atomic history, a shared manual/AI/MCP operation compiler, normalized multi-source
+FFmpeg snapshots and project trash/restore fencing. It preserves legacy artifact
+timelines. See [sequence architecture and contracts](SEQUENCES.md).
+
 ```mermaid
 flowchart TD
     Desktop[React / Tauri desktop] --> API[Authenticated loopback API]

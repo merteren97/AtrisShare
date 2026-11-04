@@ -12,6 +12,7 @@ import { AssistantPanel } from "./AssistantPanel";
 import { ClipPanel } from "./ClipPanel";
 import type { ScheduleBinding } from "../../../packages/domain/src/scheduling.js";
 import "./studio.css";
+import { SequenceEditor } from "./SequenceEditor";
 
 export interface StudioArtifact {
   id: string; accountId: string; projectId: string; filename: string; sha256: string; bytes: number; mimeType: string;
@@ -253,6 +254,8 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
     {!snapshot ? !loadError && <div className="loading-state" role="status"><LoaderCircle className="spinning" />{t("loading")}</div> : <>
       {!snapshot.tools.available && <div className="studio-callout studio-tools-callout" role="status"><div><strong>{t(snapshot.processing?.state === "retrying" ? "processingRetry" : snapshot.processing?.state === "unsupported" ? "processingUnavailable" : "toolsMissing")}</strong><p>{t(snapshot.processing?.state === "unsupported" ? "processingUnavailableHelp" : snapshot.processing?.state === "retrying" ? "processingRetryHelp" : "toolsHelp")}</p></div>{snapshot.processing?.state === "retrying" && <button className="button secondary" disabled={busy} onClick={() => { void act(async signal => { await request("/api/media/setup", "POST", {}, signal); await refresh(); }); }}>{t("retry")}</button>}</div>}
       <section role="tabpanel" id={`${uniqueId}-panel-media`} aria-labelledby={`${uniqueId}-media`} hidden={tab !== "media"}>
+        <SequenceEditor context={context} language={language} artifacts={snapshot.artifacts} toolsAvailable={snapshot.tools.available} onChanged={()=>{void refresh();}} errorText={translateError}/>
+        <details className="studio-legacy-editor"><summary>{language==="tr"?"Kaynak düzenlemeleri, klip analizi ve yayın taslağı":"Source edits, clip analysis and publication draft"}</summary>
         <div className="studio-modebar"><div className="studio-segmented" role="tablist" aria-label={t("studioTitle")}>
           {(["edit", "clips", "assistant", "publish"] as const).map(name => { const Icon = name === "edit" ? Scissors : name === "clips" ? Film : name === "assistant" ? Sparkles : Upload; return <button key={name} role="tab" aria-selected={inspector === name} id={`${uniqueId}-${name}`} aria-controls={`${uniqueId}-inspector-${name}`} tabIndex={inspector === name ? 0 : -1}
             onKeyDown={event => { const tabs = ["edit", "clips", "assistant", "publish"] as const; const index = tabs.indexOf(name); const next = event.key === "ArrowRight" ? tabs[(index + 1) % tabs.length] : event.key === "ArrowLeft" ? tabs[(index + tabs.length - 1) % tabs.length] : event.key === "Home" ? tabs[0] : event.key === "End" ? tabs[tabs.length - 1] : null; if (next) { event.preventDefault(); setInspector(next); document.getElementById(`${uniqueId}-${next}`)?.focus(); } }} onClick={() => setInspector(name)}><Icon size={14} />{t(name)}</button>; })}
@@ -289,6 +292,7 @@ function StudioWorkspace({ context, account, language, errorText, initialTab = "
           </> : <p className="studio-inspector-empty">{t("selectMediaHelp")}</p>}</aside>
         </div>
         <div className="studio-footnote"><span><ShieldCheck size={13} />{t("sourceSafe")}</span></div>
+        </details>
       </section>
       <section role="tabpanel" id={`${uniqueId}-panel-publishing`} aria-labelledby={`${uniqueId}-publishing`} hidden={tab !== "publishing"}>
         {!snapshot.publications.length ? <div className="studio-panel empty-state"><div className="empty-icon"><Upload size={24} /></div><h2>{t("noPublications")}</h2><p>{t("noPublicationsHelp")}</p><button className="button secondary" onClick={() => setTab("media")}>{t("media")}</button></div>

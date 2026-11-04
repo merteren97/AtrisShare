@@ -702,11 +702,12 @@ test("frozen v4 to v5 migration preserves old ai_runs and cancel flags and attac
     }
     const tables = ["accounts", "projects", "artifacts", "timelines", "ai_runs"];
     const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+    for (const row of before[tables.indexOf("projects")]) Object.assign(row,{revision:1,updated_at:row.created_at,deleted_at:null});
     db.close();
     for (let attempt = 0; attempt < 2; attempt++) {
       const store = new WorkspaceStore(path);
       try {
-        assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 10);
+        assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 12);
         assert.equal(store.db.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
         assert.deepEqual(store.db.prepare("PRAGMA foreign_key_check").all(), []);
         assert.deepEqual(tables.map(table => store.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), before);

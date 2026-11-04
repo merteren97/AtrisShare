@@ -14,6 +14,7 @@ import { QueuePanel } from "./QueuePanel";
 import { NativeSettings } from "./NativeSettings";
 import { MemoryExport } from "./MemoryExport";
 import { AppUpdater } from "./AppUpdater";
+import { ProjectCard, ProjectDialog, ProjectMenu, ProjectTrash, type ProjectAction, type ProjectDialogValue } from "./ProjectActions";
 import { notifyDue, onNativeOpenQueue } from "./native-desktop";
 import type { Occurrence } from "../../../packages/domain/src/scheduling.js";
 
@@ -53,6 +54,9 @@ export function App() {
   const [page, setPage] = useState<Page>("studio");
   const [studioTab, setStudioTab] = useState<"media" | "publishing">("media");
   const [modal, setModal] = useState<Modal | null>(null);
+  const [projectDialog, setProjectDialog] = useState<ProjectDialogValue | null>(null);
+  const [projectView, setProjectView] = useState<"active" | "trashed">("active");
+  const [trashVersion, setTrashVersion] = useState(0);
   const [pending, setPending] = useState(false);
   const [formError, setFormError] = useState<unknown>(null);
   const [notice, setNotice] = useState<TextKey | null>(null);
@@ -79,6 +83,7 @@ export function App() {
     if (error instanceof ApiError) {
       if (error.code === "revision_conflict") return t("revisionConflict");
       if (error.code === "invalid_input") return t("invalidInput");
+      if (error.code === "project_not_found") return t("projectUnavailable");
       if (["context_not_found", "memory_not_found", "context_required"].includes(error.code)) return t("missingContext");
       if (["unauthorized", "connection_failed", "invalid_runtime"].includes(error.code)) return t("connectionError");
       const youtubeErrors: Record<string, TextKey> = {
@@ -129,8 +134,9 @@ export function App() {
     return () => { cancelled = true; dispose?.(); };
   }, []);
   useEffect(() => {
-    setModal(null); setSearch(""); setCategory(""); setReview("");
+    setModal(null); setProjectDialog(null); setSearch(""); setCategory(""); setReview("");
   }, [context?.accountId, context?.projectId]);
+  useEffect(() => { setProjectView("active"); }, [context?.accountId]);
   useEffect(() => {
     if (!notice) return;
     const timeout = setTimeout(() => setNotice(null), 4500);
@@ -182,6 +188,17 @@ export function App() {
   const memoryCard = (entry: WorkspaceMemory) => <MemoryCard key={entry.id} entry={entry} t={t} date={date}
     onEdit={value => open({ type: "memory", entry: value })} onDelete={value => open({ type: "delete", entry: value })} />;
   const modalTitle = modal?.type === "project" ? t("newProject") : modal?.type === "delete" ? t("deleteTitle") : modal?.type === "memory" && modal.entry ? t("edit") : t("newMemory");
+  function openProject(item: WorkspaceProject) {
+    void ws.chooseContext({ accountId: item.accountId, projectId: item.id }); setStudioTab("media"); setPage("studio");
+  }
+  function projectAction(action: ProjectAction, item: WorkspaceProject, trigger: HTMLElement | null) {
+    setProjectDialog({ action, project: item, trigger });
+  }
+  const projectCards = <div className="project-grid">{state?.projects.map(item => <ProjectCard key={item.id} project={item} t={t}
+    selected={project?.id === item.id} disabled={ws.loading} onOpen={openProject} onAction={projectAction} />)}</div>;
+  const projectSelector = <label className="project-select"><span>{t("project")}</span><select aria-label={t("project")} value={context?.projectId ?? ""} disabled={!context || ws.loading}
+    onChange={event => { if (context) void ws.chooseContext({ accountId: context.accountId, projectId: event.target.value || null }); }}>
+    <option value="">{t("accountScope")}</option>{state?.projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>;
 
   return <div className="desktop-shell"><Titlebar language={language} /><AppUpdater language={language} /><div className="app-shell">
     <aside className="sidebar" aria-label="AtrisShare">
@@ -202,9 +219,7 @@ export function App() {
           onChange={event => { void ws.chooseContext({ accountId: event.target.value, projectId: null }); }}>
           {!state?.accounts.length && <option value="">{t("noAccount")}</option>}{state?.accounts.map(item => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select>{account && <span className={`badge ${account.status === "connected" ? "positive" : "demo-badge"}`}>{t(accountStatusKey(account))}</span>}</div></label>
         <span className="context-divider" />
-        <label className="project-select"><span>{t("project")}</span><select aria-label={t("project")} value={context?.projectId ?? ""} disabled={!context || ws.loading}
-          onChange={event => { if (context) void ws.chooseContext({ accountId: context.accountId, projectId: event.target.value || null }); }}>
-          <option value="">{t("accountScope")}</option>{state?.projects.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>
+        {project ? <ProjectMenu header project={project} t={t} disabled={ws.loading} onOpen={openProject} onAction={projectAction}>{projectSelector}</ProjectMenu> : projectSelector}
         {context && <button className="text-button context-new" disabled={ws.loading || !state} onClick={() => open({ type: "project" })}><Plus size={14} />{t("newProject")}</button>}
         <div className="context-saved"><Database size={13} /><span>{t("local")}</span></div>
       </div>}
@@ -216,7 +231,7 @@ export function App() {
           {page === "studio" && (context && account && context.projectId ? <Studio key={`${context.accountId}:${context.projectId}`} context={context} account={account} language={language} errorText={errorText} initialTab={studioTab} projectName={project?.name ?? ""} /> : <>
             <div className="page-heading"><div><p className="eyebrow">{t("studioLabel")}</p><h1>{t("editorStartTitle")}</h1><p>{t("editorStartHelp")}</p></div></div>
             <section className="editor-launch panel"><span className="editor-launch-icon"><Scissors size={28} strokeWidth={1.5} /></span><div><h2>{t("startEditing")}</h2><p>{t("localProjectHelp")}</p></div><button className="button primary" onClick={() => open({ type: "project" })}><Plus size={16} />{t("newProject")}</button></section>
-            {!!state.projects.length && <section className="section"><div className="section-heading"><h2>{t("recentProjects")}</h2><span className="count">{state.projects.length}</span></div><div className="project-grid">{state.projects.map(item => <button className="project-card" key={item.id} onClick={() => { void ws.chooseContext({ accountId: item.accountId, projectId: item.id }); setStudioTab("media"); }}><span className="project-symbol"><Clapperboard size={20} /></span><span className="project-card-copy"><strong>{item.name}</strong><span>{item.description || account?.displayName}</span></span><span className="project-card-bottom">{t("open")}<ArrowUpRight size={14} /></span></button>)}</div></section>}
+            {!!state.projects.length && <section className="section"><div className="section-heading"><h2>{t("recentProjects")}</h2><span className="count">{state.projects.length}</span></div>{projectCards}</section>}
             <div className="workflow-links">{([{ icon: Scissors, title: "workflowEdit", help: "workflowEditHelp", action: () => open({ type: "project" }) }, { icon: UsersRound, title: "workflowConnect", help: "workflowConnectHelp", action: () => setPage("accounts") }, { icon: CalendarClock, title: "workflowPublish", help: "workflowPublishHelp", action: () => setPage("queue") }] as const).map((item, index) => <button key={item.title} onClick={item.action}><span className="workflow-number">0{index + 1}</span><item.icon size={19} /><strong>{t(item.title)}</strong><span>{t(item.help)}</span><ChevronRight size={15} /></button>)}</div>
           </>)}
           {page === "social" && <SocialPanel mode="compose" language={language} context={context} onOpenAccounts={() => setPage("accounts")} onAccountsChanged={() => { void ws.refresh(); }} />}
@@ -226,9 +241,9 @@ export function App() {
             {!account ? <div className="panel welcome"><Empty icon={<FolderKanban size={30} />} title={t("welcomeTitle")} description={t("welcomeDescription")} action={addProject} /></div> : <>
               <div className="target-strip"><PlatformIcon platform={account.platform} /><div><strong>{account.displayName}</strong><p>{t(account.platform === "local" ? "localAccountNotice" : account.status === "demo" ? "demoNotice" : account.platform !== "youtube" ? account.status === "connected" ? "connectedAccountNotice" : "disconnectedAccountNotice" : account.status === "connected" ? "youtubeAccountNotice" : "youtubeDisconnectedNotice")}</p></div><span className={`badge ${account.status === "connected" ? "positive" : "suggested"}`}>{platformNames[account.platform]} · {t(accountStatusKey(account))}</span></div>
               <section className="section"><div className="section-heading"><div><h2>{t("projects")} <span className="count">{state.projects.length}</span></h2><p>{t("projectsDescription")}</p></div></div>
-                {state.projects.length ? <div className="project-grid">{state.projects.map(item => <button className={`project-card ${project?.id === item.id ? "selected-project" : ""}`} key={item.id} disabled={ws.loading}
-                  onClick={() => { void ws.chooseContext({ accountId: item.accountId, projectId: item.id }); setPage("studio"); }}><span className="project-symbol"><FolderKanban size={20} /></span>
-                  <span className="project-card-copy"><strong>{item.name}</strong><span>{item.description || platformNames[account.platform]}</span></span><span className="project-card-bottom">{project?.id === item.id ? t("selected") : t("open")}<ChevronRight size={14} /></span></button>)}</div>
+                <div className="project-view-switch" role="group" aria-label={t("projects")}><button className={`button ${projectView === "active" ? "subtle" : "secondary"}`} aria-pressed={projectView === "active"} onClick={() => setProjectView("active")}>{t("activeProjects")}</button><button className={`button ${projectView === "trashed" ? "subtle" : "secondary"}`} aria-pressed={projectView === "trashed"} onClick={() => setProjectView("trashed")}>{t("projectTrash")}</button></div>
+                {projectView === "trashed" ? <ProjectTrash key={account.id} accountId={account.id} t={t} date={date} errorText={errorText} version={trashVersion}
+                  onRestore={(item, trigger) => projectAction("restore", item, trigger)} /> : state.projects.length ? projectCards
                   : <div className="panel"><Empty icon={<FolderKanban size={24} />} title={t("noProjects")} description={t("noProjectsDescription")} action={addProject} /></div>}
               </section>
               <section className="section"><div className="section-heading"><div><h2>{t("recentMemory")}</h2><p>{scopeLabel(context!)}</p></div><button className="text-button" onClick={() => setPage("memory")}>{t("viewAll")}<ArrowUpRight size={14} /></button></div>
@@ -271,6 +286,11 @@ export function App() {
       <footer className="statusbar"><span><span className={`status-dot ${ws.error ? "offline-dot" : ""}`} />{ws.error ? t("connectionError") : ws.loading ? t("loading") : t("connected")}</span><span>{account?.displayName ?? "AtrisShare"}{context && <> / {scopeLabel(context)}</>}</span></footer>
     </div>
     <div className="notice-region" role="status" aria-live="polite">{notice && <div className="toast"><Check size={17} />{t(notice)}</div>}</div>
+    {projectDialog && <ProjectDialog value={projectDialog} t={t} date={date} errorText={errorText} onClose={() => setProjectDialog(null)}
+      onSave={async (item, action, fields) => {
+        await ws.changeProject(item, action, fields); setProjectDialog(null); setTrashVersion(n => n + 1);
+        setNotice(action === "trash" ? "projectTrashed" : action === "restore" ? "projectRestored" : "projectSaved");
+      }} />}
     <Dialog.Root open={modal !== null} onOpenChange={value => { if (!value && !pending) setModal(null); }}>
       <Dialog.Portal><Dialog.Overlay className="dialog-overlay" /><Dialog.Content className="dialog-content" aria-describedby="dialog-description" onEscapeKeyDown={event => { if (pending) event.preventDefault(); }} onPointerDownOutside={event => { if (pending) event.preventDefault(); }}
         onCloseAutoFocus={event => {

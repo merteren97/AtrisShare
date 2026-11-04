@@ -198,11 +198,12 @@ test("v2 to v3 migration preserves connected identities, credentials references 
   old.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?)").run(auditId, accountId, projectId, "memory.created", memoryId, "local-user", stamp);
   const tables = ["accounts", "projects", "youtube_connections", "memory", "context", "audit"];
   const before = tables.map(table => old.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  for (const row of before[tables.indexOf("projects")]) Object.assign(row,{revision:1,updated_at:row.created_at,deleted_at:null});
   old.close();
   for (let reopen = 0; reopen < 2; reopen++) {
     const store = new WorkspaceStore(path), inspection = new DatabaseSync(path);
     try {
-      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 10);
+      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 12);
       assert.deepEqual(tables.map(table => inspection.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), before);
       assert.deepEqual(inspection.prepare("PRAGMA foreign_key_check").all(), []);
       assert.equal(store.getYouTubeConnection(accountId, destination).revision, 7);

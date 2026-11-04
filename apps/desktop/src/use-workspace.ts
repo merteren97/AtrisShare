@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AuditEvent, WorkspaceContext, WorkspaceMemory, WorkspaceSnapshot } from "../../../packages/domain/src/workspace.js";
+import type { AuditEvent, WorkspaceContext, WorkspaceMemory, WorkspaceProject, WorkspaceSnapshot } from "../../../packages/domain/src/workspace.js";
 import { reconnect, request } from "./api";
 
 export function scopeQuery(scope: WorkspaceContext): string {
@@ -53,5 +53,12 @@ export function useWorkspace() {
     void refresh();
     return () => { ++epoch.current; controller.current?.abort(); };
   }, [refresh]);
-  return { snapshot, memory, audit, loading, error, refresh, chooseContext };
+  const changeProject = useCallback(async (project: WorkspaceProject, action: "rename" | "info" | "trash" | "restore", fields?: { name: string; description: string }) => {
+    const path = `/api/projects/${project.id}${action === "restore" ? "/restore" : ""}`;
+    await request(path, action === "trash" ? "DELETE" : action === "restore" ? "POST" : "PATCH", {
+      context: { accountId: project.accountId, projectId: project.id }, expectedRevision: project.revision, ...fields
+    });
+    await refresh();
+  }, [refresh]);
+  return { snapshot, memory, audit, loading, error, refresh, chooseContext, changeProject };
 }

@@ -11,6 +11,8 @@ import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { aiProposalSchema, aiRequestSchema, aiScopeSchema } from "../dist/packages/domain/src/ai.js";
+import { AiBridgeError } from "../dist/packages/ai-bridge/src/diagnostics.js";
+import { aiConnectionRoute } from "../dist/services/local-api/src/ai-connection-routes.js";
 import { APP_VERSION } from "../dist/packages/domain/src/workspace.js";
 import { WorkspaceStore } from "../dist/packages/storage/src/store.js";
 import { AiService } from "../dist/services/local-api/src/ai.js";
@@ -41,7 +43,8 @@ const gate = () => {
 class ControlledBridge {
   discoveries = 0;
   calls = [];
-  setup = { available: true, version: "controlled-test", models: [MODEL], auth: "cli-managed", error: null };
+  setup = { available: true, version: "controlled-test", models: [MODEL], auth: "cli-managed", error: null, profileId: "a".repeat(64) };
+  testCalls = [];
   async discover(signal) { signal.throwIfAborted(); this.discoveries++; return this.setup; }
   async propose(input, event, signal) {
     const call = { ...input, event, signal };
@@ -50,6 +53,12 @@ class ControlledBridge {
     if (this.handler) return this.handler(call);
     event({ type: "activity", message: "controlled" });
     return { summary: "Keep the opening and closing source ranges", edit: structuredClone(EDIT), sessionId: "controlled-session" };
+  }
+  async testConnection(model, signal, requestId) {
+    const call = { model, signal, requestId }; this.testCalls.push(call);
+    if (this.testHandler) return this.testHandler(call);
+    signal.throwIfAborted();
+    return { profileId: this.setup.profileId, version: "1.19.5", diagnostic: { stage: "protocol", category: "none", exitCode: 0, durationMs: 2, requestId, version: "1.19.5" } };
   }
 }
 
@@ -222,6 +231,130 @@ test("timed speech captions cannot bypass transcript consent through current tim
   const next = await ready(f, a); assert.equal(next.edit.timedCaptions[0].text, "api_key=[REDACTED]");
 });
 const renderDone = (f, id) => until(() => f.store.studio.render(id, f.context), value => value.state !== "running", "render completion");
+
+async function connectionFixture(t) {
+  const f = await fixture(t), studio = new StudioService(f.store, {}, {}, f.directory);
+  const options = { bridge: f.bridge, preferenceDirectory: join(f.directory, "preferences") };
+  let ai = new AiService(f.store, studio, options);
+  f.cleanup.push(() => studio.close(), () => ai.close());
+  return { ...f, get ai() { return ai; }, options,
+    async reopen() { await ai.close(); ai = new AiService(f.store, studio, options); },
+    status(context = f.context) { return ai.connectionStatus({ context }); },
+    route(method, path, value) { return aiConnectionRoute(ai, method, new URL(path, "http://localhost"), async () => value); },
+    start(extra = {}) { return ai.startConnectionTest({ context: f.context, model: MODEL, allowRemote: true, ...extra }); },
+    done() { return until(() => ai.connectionStatus({ context: f.context }), status => status.lastTest?.state !== "running", "connection test"); },
+  };
+}
+
+test("connection routes require explicit consent and project context; catalog/discovery alone never verifies auth or starts inference", async t => {
+  const f = await connectionFixture(t);
+  for (const extra of [{ allowRemote: false }, { allowRemote: undefined }, { prompt: "private" }, { context: { ...f.context, projectId: null } }]) {
+    await assert.rejects(f.start(extra));
+  }
+  assert.equal(f.bridge.discoveries, 0); assert.equal(f.bridge.testCalls.length, 0);
+  const status = await f.route("GET", `/api/ai/connection?${query(f.context)}`);
+  assert.equal(status.status, 200); assert.equal(status.body.authentication, "unverified");
+  assert.equal(status.body.catalogSource, "general-catalog"); assert.equal(status.body.preference, null); assert.equal(status.body.lastTest, null);
+  assert.equal(await f.route("POST", "/api/ai/connection/unknown", {}), null);
+  await assert.rejects(f.route("GET", "/api/ai/connection", {}));
+  await assert.rejects(f.start({ model: "controlled/not-listed" }), { code: "ai_model_unavailable" });
+  assert.equal(f.bridge.testCalls.length, 0); assert.equal(f.bridge.calls.length, 0);
+});
+
+test("successful explicit connection test persists the exact account/profile/model across projects and reopen; auth evidence is session-only", async t => {
+  const f = await connectionFixture(t);
+  const started = await f.route("POST", "/api/ai/connection/tests", { context: f.context, model: MODEL, allowRemote: true });
+  assert.equal(started.status, 202); assert.equal(started.body.model, MODEL);
+  const result = await f.done();
+  assert.equal(result.lastTest.state, "succeeded"); assert.equal(result.authentication, "verified-by-inference");
+  assert.equal(result.persistence, "disk"); assert.equal(result.preference.model, MODEL); assert.equal(result.preference.provider, "controlled");
+  assert.equal(result.preferenceAvailable, true); assert.ok(result.preference.succeededAt);
+  assert.equal((await f.ai.cancelConnectionTest(started.body.id, { context: f.context })).lastTest.state, "succeeded", "completed response wins a late cancel without a spurious error");
+  assert.equal(f.bridge.testCalls.length, 1); assert.equal(f.bridge.calls.length, 0);
+  assert.deepEqual((await f.status(f.sibling)).preference, result.preference);
+  assert.equal((await f.status(f.other)).preference, null);
+  await f.reopen();
+  const reopened = await f.status();
+  assert.deepEqual(reopened.preference, result.preference); assert.equal(reopened.authentication, "unverified"); assert.equal(reopened.lastTest, null);
+  assert.equal(f.bridge.testCalls.length, 1, "reopen must never retry automatically");
+  const saved = await readFile(join(f.options.preferenceDirectory, (await readdir(f.options.preferenceDirectory))[0]), "utf8");
+  for (const secret of [f.api.token, f.directory, f.context.projectId, f.destinationId, "prompt", "diagnostic"]) assert.ok(!saved.includes(secret));
+});
+
+test("missing catalog model retains an invalid preference with no silent fallback; profile changes do not reuse old verification", async t => {
+  const f = await connectionFixture(t); await f.start(); const previous = await f.done();
+  f.bridge.setup = { ...f.bridge.setup, models: ["controlled/alternative"] }; await f.ai.setup(true);
+  const missing = await f.status();
+  assert.deepEqual(missing.preference, previous.preference); assert.equal(missing.preferenceAvailable, false);
+  await assert.rejects(f.start(), { code: "ai_model_unavailable" }); assert.equal(f.bridge.testCalls.length, 1);
+  f.bridge.setup = { ...f.bridge.setup, profileId: "b".repeat(64) }; await f.ai.setup(true);
+  const otherProfile = await f.status(); assert.equal(otherProfile.preference, null); assert.equal(otherProfile.authentication, "unverified");
+});
+
+test("failed connection tests preserve the last successful preference and expose only sanitized error categories", async t => {
+  const f = await connectionFixture(t); await f.start(); const previous = await f.done();
+  for (const code of ["ai_auth_required", "ai_access_denied", "ai_quota_exceeded", "ai_network_error", "ai_secret_token"]) {
+    f.bridge.testHandler = async () => { throw new Error(code); };
+    await f.start(); const status = await f.done();
+    assert.equal(status.lastTest.state, "failed"); assert.deepEqual(status.preference, previous.preference);
+    assert.equal(status.lastTest.error, code === "ai_secret_token" ? "ai_process_failed" : code);
+    assert.equal(status.authentication, code === "ai_auth_required" ? "required" : "unverified");
+    assert.ok(!JSON.stringify(status).includes("secret_token"));
+  }
+  f.bridge.testHandler = async call => { throw new AiBridgeError("ai_access_denied", 9, { stage: "inference", category: "access", exitCode: 9, durationMs: 3, requestId: call.requestId, version: "1.19.5" }); };
+  await f.start(); const failed = await f.done(); assert.equal(failed.lastTest.diagnostic.exitCode, 9); assert.equal(failed.lastTest.diagnostic.category, "access");
+});
+
+for (const action of ["cancel", "close"]) test(`connection ${action} waits for cleanup, fences a late success and allows a new attempt`, async t => {
+  const f = await connectionFixture(t), entered = gate(), release = gate();
+  f.cleanup.push(() => release.resolve());
+  f.bridge.testHandler = async call => { entered.resolve(call); await release.promise; return { profileId: f.bridge.setup.profileId, diagnostic: {} }; };
+  const run = await f.start(), call = await entered.promise;
+  await assert.rejects(f.start(), { code: "ai_busy" });
+  await assert.rejects(f.ai.cancelConnectionTest(run.id, { context: f.other }), { code: "ai_connection_test_not_found" });
+  let settled = false;
+  const stopping = (action === "close" ? f.ai.close() : f.route("POST", `/api/ai/connection/tests/${run.id}/cancel`, { context: f.context })).then(value => { settled = true; return value; });
+  await until(() => call.signal.aborted, Boolean, "connection abort"); assert.equal(settled, false);
+  release.resolve(); await stopping;
+  if (action === "cancel") { const cancelled = await f.status(); assert.equal(cancelled.lastTest.state, "cancelled"); assert.equal(cancelled.preference, null); }
+  await f.reopen(); f.bridge.testHandler = undefined;
+  await f.start(); assert.equal((await f.done()).lastTest.state, "succeeded");
+});
+
+test("corrupt preference is reported safely and a new successful request repairs it", async t => {
+  const f = await connectionFixture(t); await f.start(); await f.done();
+  const file = join(f.options.preferenceDirectory, (await readdir(f.options.preferenceDirectory))[0]);
+  await writeFile(file, '{"token":"secret-token"}');
+  const invalid = await f.status(); assert.equal(invalid.preferenceError, "ai_preference_invalid"); assert.equal(invalid.preference, null);
+  assert.ok(!JSON.stringify(invalid).includes("secret-token"));
+  await f.start(); assert.equal((await f.done()).preferenceError, null);
+});
+
+test("connection diagnostics reject unexpected fields and never serialize arbitrary bridge error metadata", async t => {
+  const f = await connectionFixture(t);
+  const diagnostic = call => ({ stage: "inference", category: "authentication", exitCode: 1, durationMs: 2, requestId: call.requestId, version: "1.19.5", stderr: "secret-token" });
+  f.bridge.testHandler = async call => { throw new AiBridgeError("ai_auth_required", 1, diagnostic(call)); };
+  await f.start(); const failed = await f.done();
+  assert.equal(failed.lastTest.error, "ai_auth_required"); assert.equal(failed.lastTest.diagnostic.category, "authentication");
+  assert.ok(!JSON.stringify(failed).includes("secret-token")); assert.ok(!JSON.stringify(failed).includes("stderr"));
+  f.bridge.testHandler = async call => ({ profileId: f.bridge.setup.profileId, diagnostic: diagnostic(call) });
+  await f.start(); const invalid = await f.done();
+  assert.equal(invalid.lastTest.error, "ai_protocol_error"); assert.equal(invalid.preference, null); assert.ok(!JSON.stringify(invalid).includes("secret-token"));
+});
+
+test("a validated edit request also remembers its model, while an invalid proposal does not replace that preference", async t => {
+  const f = await connectionFixture(t), a = await imported(f);
+  const run = await f.ai.start(request(f, a));
+  await until(() => f.ai.tasks.has(run.id), value => !value, "proposal preference persistence");
+  const previous = await f.status(); assert.equal(previous.preference.model, MODEL); assert.equal(previous.lastTest, null);
+  assert.equal(previous.authentication, "unverified", "a saved selection is historical, not a fresh connection test");
+  f.bridge.setup = { ...f.bridge.setup, models: [MODEL, "controlled/invalid-output"] }; await f.ai.setup(true);
+  f.bridge.handler = async () => ({ summary: "Invalid", edit: { ...EDIT, outSeconds: 100 }, sessionId: "controlled" });
+  const invalid = await f.ai.start(request(f, a, { model: "controlled/invalid-output" }));
+  await until(() => f.ai.tasks.has(invalid.id), value => !value, "invalid proposal completion");
+  assert.equal(f.store.studio.aiRun(invalid.id, f.context).state, "failed"); assert.deepEqual((await f.status()).preference, previous.preference);
+});
+
 function patchArtifact(f, a, changes) {
   f.store.db.prepare("UPDATE artifacts SET data=? WHERE id=?").run(JSON.stringify({ ...f.store.studio.artifact(a.id, f.context), ...changes }), a.id);
 }
@@ -316,11 +449,12 @@ test("frozen v3 to v4 migration preserves artifacts, timeline, publications, ren
   db.prepare("INSERT INTO audit VALUES(?,?,?,?,?,?,?)").run(randomUUID(), accountId, projectId, "memory.created", memoryId, "local-user", stamp);
   const tables = ["accounts", "projects", "youtube_connections", "artifacts", "timelines", "publications", "renders", "memory", "context", "audit"];
   const before = tables.map(table => db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  for (const row of before[tables.indexOf("projects")]) Object.assign(row,{revision:1,updated_at:row.created_at,deleted_at:null});
   db.close();
   for (let attempt = 0; attempt < 2; attempt++) {
     const store = new WorkspaceStore(path);
     try {
-      assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 10);
+      assert.equal(store.db.prepare("PRAGMA user_version").get().user_version, 12);
       assert.equal(store.db.prepare("PRAGMA foreign_keys").get().foreign_keys, 1);
       assert.deepEqual(store.db.prepare("PRAGMA foreign_key_check").all(), []);
       assert.deepEqual(tables.map(table => store.db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()), before);

@@ -32,6 +32,11 @@ import { MediaTools, mediaToolsSchema } from "./media-tools.js";
 import { TranscriptionEngine } from "../../../packages/media-engine/src/transcription.js";
 import { ManagedMediaTools } from "./managed-media-tools.js";
 import { OpenCodeBridge } from "../../../packages/ai-bridge/src/opencode.js";
+import { aiConnectionRoute } from "./ai-connection-routes.js";
+import { projectRoute } from "./project-routes.js";
+import { SequenceService } from "./sequence.js";
+import { sequenceRoute } from "./sequence-routes.js";
+import { SequenceMcp, sequenceGrantSchema } from "./sequence-mcp.js";
 
 export interface ApiOptions {
   dataDirectory?: string;
@@ -45,6 +50,7 @@ export interface ApiOptions {
   youtube?: YouTubeOptions;
   studio?: StudioOptions;
   ai?: AiOptions;
+  sequenceBridge?: ConstructorParameters<typeof SequenceService>[2];
   transcription?: TranscriptionOptions;
   clips?: ClipOptions;
   social?: Omit<SocialOptions, "mediaPath">;
@@ -102,7 +108,9 @@ export async function startApi(options: ApiOptions = {}) {
   const studio = new StudioService(store, youtube, credentialVault, directory, { ...options.studio, engine: { ...toolPaths, ...options.studio?.engine } });
   const transcription = new TranscriptionService(store, studio, options.transcription ?? { engine: new TranscriptionEngine(toolPaths) });
   const aiBridge = new OpenCodeBridge({ catalogDirectory: join(directory, "ai", "opencode") });
-  const ai = new AiService(store, studio, { bridge: aiBridge, ...options.ai, transcription });
+  const ai = new AiService(store, studio, { bridge: aiBridge, preferenceDirectory: join(directory,"ai","preferences"), ...options.ai, transcription });
+  const sequence = new SequenceService(store, studio, options.sequenceBridge ?? aiBridge,(context,model)=>ai.rememberSuccessfulModel(context,model));
+  const sequenceMcp = new SequenceMcp(store,sequence);
   const clips = new ClipService(store, studio, transcription, { bridge: aiBridge, ...options.clips });
   const social = new SocialService(store.social, credentialVault, { validateXText: text => twitterText.parseTweet(text).valid,
     xTextMetrics: text => { const r = twitterText.parseTweet(text); return { weightedLength: r.weightedLength, valid: r.valid }; }, ...options.social, mediaPath: id => studio.engine.path(id) });
@@ -151,14 +159,29 @@ export async function startApi(options: ApiOptions = {}) {
       // A short-lived MCP capability is accepted only on this dedicated surface.
       // It is never the desktop session bearer and grants no approval/vault access.
       if (url.pathname.startsWith("/api/mcp/")) {
-        if (request.method === "GET" && url.pathname === "/api/mcp/capabilities") send(response, 200, ai.capabilities(request.headers.authorization ?? ""));
-        else if (request.method === "POST" && url.pathname === "/api/mcp/call") send(response, 200, await ai.call(request.headers.authorization ?? "", await body(request)));
+        const auth=request.headers.authorization ?? "",mcp=sequenceMcp.owns(auth)?sequenceMcp:ai;
+        if (request.method === "GET" && url.pathname === "/api/mcp/capabilities") send(response, 200, mcp.capabilities(auth));
+        else if (request.method === "POST" && url.pathname === "/api/mcp/call") send(response, 200, await mcp.call(auth, await body(request,256*1024)));
         else throw new WorkspaceError(404, "not_found");
         return;
       }
       const received = createHash("sha256").update(request.headers.authorization ?? "").digest();
       if (!timingSafeEqual(received, expected)) throw new WorkspaceError(401, "unauthorized");
       const route = `${request.method} ${url.pathname}`;
+      if(route==="POST /api/sequence/grants"){send(response,201,sequenceMcp.create(sequenceGrantSchema.parse(await body(request)),origin));return;}
+      if(route==="POST /api/sequence/grants/revoke"){const i=z.object({context:studioContextSchema,token:z.string()}).strict().parse(await body(request));send(response,200,sequenceMcp.revoke(i.token,i.context));return;}
+      if (url.pathname === "/api/projects" || url.pathname.startsWith("/api/projects/")) {
+        const result = await projectRoute(store, request.method ?? "", url, () => body(request));
+        if (!result) throw new WorkspaceError(404,"not_found"); send(response,result.status,result.body); return;
+      }
+      if (url.pathname.startsWith("/api/ai/connection")) {
+        const result = await aiConnectionRoute(ai,request.method ?? "",url,()=>body(request));
+        if (!result) throw new WorkspaceError(404,"not_found"); send(response,result.status,result.body); return;
+      }
+      if (url.pathname === "/api/sequence" || url.pathname.startsWith("/api/sequence/")) {
+        const result = await sequenceRoute(sequence,store,request.method ?? "",url,()=>body(request,256*1024));
+        if (!result) throw new WorkspaceError(404,"not_found"); send(response,result.status,result.body); return;
+      }
       if (url.pathname.startsWith("/api/social")) {
         const requestAbort = new AbortController();
         const abortSocial = () => { if (!response.writableEnded) requestAbort.abort(); };
@@ -260,10 +283,12 @@ export async function startApi(options: ApiOptions = {}) {
       } else if (request.method === "POST" && /^\/api\/transcripts\/[^/]+\/cancel$/.test(url.pathname)) {
         const input = z.object({ context: studioContextSchema }).strict().parse(await body(request));
         send(response, 200, await transcription.cancel(idSchema.parse(url.pathname.split("/")[3]), input.context));
-      } else if (request.method === "GET" && /^\/api\/media\/[^/]+\/content$/.test(url.pathname)) {
+      } else if (request.method === "GET" && /^\/api\/media\/[^/]+\/(content|download)$/.test(url.pathname)) {
         const artifact = store.studio.artifact(idSchema.parse(url.pathname.split("/")[3]), queryContext(url));
         // No bearer-bearing URLs. Browser playback uses a bounded authenticated Blob.
-        if (artifact.bytes > 256 * 1024 ** 2) throw new WorkspaceError(413, "studio_blob_limit");
+        if (url.pathname.endsWith("/content") && artifact.bytes > 256 * 1024 ** 2) throw new WorkspaceError(413, "studio_blob_limit");
+        if (!await studio.engine.verify(artifact.id,artifact.sha256)) throw new WorkspaceError(409,"media_source_changed");
+        store.studio.artifact(artifact.id,queryContext(url));
         response.writeHead(200, { "Content-Type": artifact.mimeType, "Content-Length": artifact.bytes, "Content-Disposition": "inline" });
         await pipeline(createReadStream(studio.engine.path(artifact.id)), response);
       } else if (route === "GET /api/youtube/catalog") {
@@ -352,7 +377,8 @@ export async function startApi(options: ApiOptions = {}) {
   server.headersTimeout = 10_000;
   function close(): Promise<void> {
     scheduler.close();
-    closePromise ??= Promise.all([managedTools?.close(), clips.close()]).then(() => Promise.all([ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()])).then(() => new Promise<void>((resolve, reject) => {
+    sequenceMcp.close();
+    closePromise ??= Promise.all([managedTools?.close(), clips.close(), sequence.close()]).then(() => Promise.all([ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()])).then(() => new Promise<void>((resolve, reject) => {
       server.close(error => { store.close(); if (error) reject(error); else resolve(); });
       server.closeIdleConnections();
     }));
@@ -368,7 +394,7 @@ export async function startApi(options: ApiOptions = {}) {
         resolve();
       });
     });
-  } catch (error) { scheduler.close(); await Promise.all([managedTools?.close(), clips.close(), ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()]); store.close(); throw error; }
+  } catch (error) { scheduler.close(); await Promise.all([managedTools?.close(), clips.close(), sequence.close(), ai.close(), transcription.close(), studio.close(), youtube.close(), social.close(), socialText.close()]); store.close(); throw error; }
   // Discovery only: no inference, browser login or media is sent at startup.
   // AiService owns cancellation and awaits this work during shutdown.
   if (options.refreshAiModels) void ai.setup(true).catch(() => undefined);

@@ -8,6 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { editSchema, mediaProbeSchema } from "../../domain/src/media.js";
 import type { MediaEdit, MediaProbe } from "../../domain/src/media.js";
 import type { ClipSignals } from "../../domain/src/clips.js";
+import { sequenceFrames, validateSequence, type SequenceSnapshot } from "../../domain/src/sequence.js";
 
 const MAX_BYTES = 2 * 1024 ** 3;
 const MAX_TIME = 30 * 60 * 1000;
@@ -512,6 +513,63 @@ export class MediaEngine {
       onProgress, signal, ".render-", caption?.text, cueFiles);
   }
 
+  /** Shared preview/export compiler: frame-clock cuts, normalized A/V and explicit gaps. */
+  async renderSequence(outputId: string, snapshot: SequenceSnapshot, sources: { id: string; sha256: string; probe: MediaProbe }[], onProgress: (p: number) => void, signal: AbortSignal): Promise<MediaResult> {
+    outputId = mediaId(outputId); signal.throwIfAborted();
+    const byId = new Map(sources.map(s => [s.id, s]));
+    validateSequence({ profile: snapshot.profile, clips: snapshot.clips }, id => {
+      const s = byId.get(id); if (!s) throw new Error("media_source_changed");
+      return { ...s, accountId: snapshot.context.accountId, projectId: snapshot.context.projectId, filename: "source.mp4", bytes: 1, mimeType: "video/mp4", sourceId: null, channelVideoId: null, createdAt: "", kind: "source" };
+    });
+    if (!snapshot.clips.length || byId.has(outputId)) throw new Error("media_render_incomplete");
+    const { width, height, fps, sampleRate } = snapshot.profile;
+    const used = [...new Set(snapshot.clips.map(c => c.sourceArtifactId))], args: string[] = [], graph: string[] = [], files: {name:string;text:string}[] = [];
+    const containers: Container[] = [];
+    for (const [i, id] of used.entries()) {
+      const source = byId.get(id)!;
+      if (!await this.verify(id, source.sha256, signal)) throw new Error("media_source_changed");
+      const path = await this.existing(id), container = await containerOf(path, signal); containers.push(container);
+      const actual = await this.probeFile(path, container, signal);
+      if (Math.abs(actual.duration - source.probe.duration) > .001) throw new Error("media_source_changed");
+      args.push(...(i ? this.inputArgs(container) : []), "-threads", "2", "-i", path);
+      const clips = snapshot.clips.map((c, index) => ({ c, index })).filter(({c}) => c.sourceArtifactId === id);
+      graph.push(`[${i}:v:0]${clips.length > 1 ? `split=${clips.length}${clips.map(({index}) => `[sv${index}]`).join("")}` : `null[sv${clips[0]!.index}]`}`);
+      if (actual.hasAudio) graph.push(`[${i}:a:0]aresample=${sampleRate}:async=1:first_pts=0,apad,atrim=end=${actual.duration},aformat=sample_fmts=fltp:sample_rates=${sampleRate}:channel_layouts=stereo,${clips.length > 1 ? `asplit=${clips.length}${clips.map(({index}) => `[sa${index}]`).join("")}` : `anull[sa${clips[0]!.index}]`}`);
+    }
+    const joined: string[] = [];
+    for (const [i, c] of snapshot.clips.entries()) {
+      const start = c.inFrame / fps, end = c.outFrame / fps, duration = (c.outFrame - c.inFrame) / fps;
+      if (c.gapBeforeFrames) {
+        const gap = c.gapBeforeFrames / fps;
+        graph.push(`color=c=black:s=${width}x${height}:r=${fps}:d=${gap},setsar=1[gv${i}]`, `anullsrc=r=${sampleRate}:cl=stereo,atrim=duration=${gap},asetpts=PTS-STARTPTS[ga${i}]`); joined.push(`[gv${i}][ga${i}]`);
+      }
+      const filters = [`trim=start=${start}:end=${end}`, `setpts=PTS-${start}/TB`, `fps=fps=${fps}:start_time=0:round=near`, `tpad=stop_mode=clone:stop_duration=${duration}`, `trim=end_frame=${c.outFrame - c.inFrame}`, "scale=trunc(iw*sar/2)*2:ih", "setsar=1"];
+      if (c.crop === "square") filters.push(`crop=min(iw\\,ih):min(iw\\,ih):(iw-ow)*${c.cropX ?? .5}:(ih-oh)/2`);
+      if (c.crop === "vertical") filters.push(`crop=trunc(min(iw\\,ih*9/16)/2)*2:trunc(min(ih\\,iw*16/9)/2)*2:(iw-ow)*${c.cropX ?? .5}:(ih-oh)/2`);
+      filters.push(`scale=${width}:${height}:force_original_aspect_ratio=decrease:force_divisible_by=2`, `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`, "setsar=1", "format=yuv420p", `settb=1/${fps}`);
+      const caption = (text: string, enable?: string) => {
+        const layout = captionLayout(text, width, height), name = `seq-caption-${files.length}.txt`; files.push({name, text: layout.text});
+        filters.push(`drawtext=textfile=${name}:expansion=none:fontcolor=white:fontsize=${layout.fontSize}:line_spacing=${layout.spacing}:box=1:boxcolor=black@0.6:boxborderw=${layout.border}:x=(w-text_w)/2:y=h-text_h-${layout.margin + layout.border}${enable ? `:enable='${enable}'` : ""}`);
+      };
+      if (c.caption) caption(c.caption);
+      for (const cue of c.timedCaptions ?? []) { const a = Math.max(start, cue.start) - start, b = Math.min(end, cue.end) - start; if (b > a) caption(cue.text, `gte(t,${a})*lt(t,${b})`); }
+      graph.push(`[sv${i}]${filters.join(",")}[cv${i}]`);
+      if (byId.get(c.sourceArtifactId)!.probe.hasAudio) graph.push(`[sa${i}]atrim=start=${start}:end=${end},asetpts=PTS-${start}/TB,apad,atrim=duration=${duration},volume=${c.gainDb}dB[ca${i}]`);
+      else graph.push(`anullsrc=r=${sampleRate}:cl=stereo,atrim=duration=${duration},asetpts=PTS-STARTPTS[ca${i}]`);
+      joined.push(`[cv${i}][ca${i}]`);
+    }
+    graph.push(`${joined.join("")}concat=n=${joined.length}:v=1:a=1[video][audio]`);
+    args.push("-filter_complex", graph.join(";"), "-filter_complex_threads", "2", "-map", "[video]", "-map", "[audio]", "-r", String(fps), "-ar", String(sampleRate), "-t", String(sequenceFrames(snapshot) / fps));
+    if (args.filter((_, i) => args[i - 1] !== "-filter_complex").join(" ").length > 24000) throw new Error("media_sequence_input_limit");
+    let published = false;
+    try {
+      const result = await this.encode(outputId, this.path(outputId), containers[0]!, args, { width, height, duration: sequenceFrames(snapshot) / fps, hasAudio: true }, onProgress, signal, ".sequence-", undefined, files, true);
+      published = true;
+      for (const id of used) if (!await this.verify(id, byId.get(id)!.sha256, signal)) throw new Error("media_source_changed");
+      signal.throwIfAborted(); return result;
+    } catch (e) { if (published) await this.remove(outputId); throw e; }
+  }
+
   /** Full-source playback proxy. Source seconds map directly to proxy seconds. */
   async proxy(sourceId: string, outputId: string, onProgress: (p: number) => void, signal: AbortSignal): Promise<MediaResult> {
     sourceId = mediaId(sourceId); outputId = mediaId(outputId);
@@ -532,7 +590,7 @@ export class MediaEngine {
   }
 
   private async encode(outputId: string, destination: string, container: Container, args: string[], expected: MediaProbe,
-    onProgress: (p: number) => void, signal: AbortSignal, prefix: string, caption?: string, cueFiles: { name: string; text: string }[] = []): Promise<MediaResult> {
+    onProgress: (p: number) => void, signal: AbortSignal, prefix: string, caption?: string, cueFiles: { name: string; text: string }[] = [], forceScript=false): Promise<MediaResult> {
     const workspace = await mkdtemp(join(this.directory, prefix));
     const temporary = join(workspace, "output.mp4");
     let progress = -1, pending = "";
@@ -546,7 +604,7 @@ export class MediaEngine {
       if (caption) await writeFile(join(workspace, "caption.txt"), caption, { flag: "wx", mode: 0o600 });
       for (const file of cueFiles) await writeFile(join(workspace, file.name), file.text, { flag: "wx", mode: 0o600 });
       // Keep long cue/concat graphs out of Windows' command-line length limit.
-      if (cueFiles.length) {
+      if (cueFiles.length || forceScript) {
         const at = args.findIndex(arg => arg === "-vf" || arg === "-filter_complex");
         if (at < 0 || !args[at + 1]) throw new Error("media_render_incomplete");
         await writeFile(join(workspace, "filters.txt"), args[at + 1]!, { flag: "wx", mode: 0o600 });

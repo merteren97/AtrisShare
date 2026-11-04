@@ -76,6 +76,14 @@ temiz kurulum kabulü Aşama 9'da; paketleme yayın izni değildir. [Zamanlayıc
 
 ## Masaüstü kurulum paketleri
 
+Yeni proje kurgusu; farklı kaynakları seçilen sırada birleştirme, aynı kaynağın farklı
+aralıklarını tekrar kullanma, trim/bölme/sıralama/çoğaltma, kalıcı toplu geri al/yinele,
+revizyona bağlı kurgu önizlemesi ve tek MP4 çıktısı sunar. AI aynı işlem katmanına
+öneri üretir; insan uygulaması gerekir. Projeler yeniden adlandırılabilir, bilgileri
+değiştirilebilir, çöp kutusuna taşınıp geri yüklenebilir. CLI bağlantı testi gerçek
+isteği katalog keşfinden ayırır; native çıktı kaydı belleğe almadan diske akar.
+[İş akışı, sınırlar ve API](docs/SEQUENCES.md).
+
 GitHub Actions **Desktop release → Run workflow**, Windows x64 için NSIS `.exe`,
 Linux x64 için `.deb` / `.AppImage` üretir. Varsayılan olarak taslak release oluşturur;
 iki platformun kontrolleri geçince kurulum dosyaları ve SHA-256 özetleri eklenir.

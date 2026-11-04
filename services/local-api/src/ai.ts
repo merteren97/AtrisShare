@@ -5,20 +5,23 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import type { MediaEdit } from "../../../packages/domain/src/media.js";
 import { OpenCodeBridge } from "../../../packages/ai-bridge/src/opencode.js";
-import { aiProposalSchema, aiRequestSchema, aiScopeSchema, type AiRun } from "../../../packages/domain/src/ai.js";
+import { aiConnectionScopeSchema, aiConnectionTestSchema, aiDiagnosticSchema, aiProposalSchema, aiRequestSchema, aiScopeSchema, type AiRun, type AiConnectionStatus, type AiConnectionTest } from "../../../packages/domain/src/ai.js";
+import { AiBridgeError, errorCategory, safeAiError } from "../../../packages/ai-bridge/src/diagnostics.js";
+import { AiPreferences } from "./ai-preferences.js";
 import { publicationInputSchema } from "../../../packages/domain/src/studio.js";
 import { idSchema, type WorkspaceContext } from "../../../packages/domain/src/workspace.js";
 import { redactSensitiveText, WorkspaceError } from "../../../packages/storage/src/config.js";
 import type { WorkspaceStore } from "../../../packages/storage/src/store.js";
 import type { StudioService } from "./studio.js";
 import type { TranscriptionService } from "./transcription.js";
+import { projectLifecycleGuard } from "./project-lifecycle.js";
 
-export interface AiOptions { bridge?: Pick<OpenCodeBridge, "discover" | "propose">; transcription?: TranscriptionService }
+type Bridge = Pick<OpenCodeBridge, "discover" | "propose"> & Partial<Pick<OpenCodeBridge, "testConnection">>;
+export interface AiOptions { bridge?: Bridge; transcription?: TranscriptionService; preferenceDirectory?: string }
 type Scope = z.infer<typeof aiScopeSchema>;
 type Setup = Awaited<ReturnType<OpenCodeBridge["discover"]>>;
-interface Grant { scope: Scope; includeMemory: boolean; includeTranscript: boolean; expiresAt: number; proposals: Set<string>; renders: Set<string>; transcripts: Set<string> }
-const cleanError = (error: unknown): string => error instanceof WorkspaceError ? error.code
-  : error instanceof Error && /^ai_[a-z_]+$/.test(error.message) ? error.message : "ai_process_failed";
+interface Grant { scope: Scope; assertActive: () => void; includeMemory: boolean; includeTranscript: boolean; expiresAt: number; proposals: Set<string>; renders: Set<string>; transcripts: Set<string> }
+const cleanError = (error: unknown): string => error instanceof WorkspaceError ? error.code : safeAiError(error);
 const stamp = () => new Date().toISOString();
 const digest = (value: string) => createHash("sha256").update(value).digest("hex");
 const sanitizedEdit = (edit: MediaEdit) => ({ ...edit, caption: redactSensitiveText(edit.caption),
@@ -27,7 +30,11 @@ const sanitizedEdit = (edit: MediaEdit) => ({ ...edit, caption: redactSensitiveT
 // the metadata/current-timeline path; transcript_read/context has its own consent.
 const metadataEdit = (edit: MediaEdit) => { const { timedCaptions, ...value } = edit; return { ...value, caption: redactSensitiveText(edit.caption) }; };
 export class AiService {
-  private readonly bridge: Pick<OpenCodeBridge, "discover" | "propose">;
+  private readonly bridge: Bridge;
+  private readonly preferences: AiPreferences;
+  private readonly preferenceErrors = new Map<string, string>();
+  private readonly connectionTests = new Map<string, AiConnectionTest>();
+  private readonly connectionTasks = new Map<string, { context: WorkspaceContext; abort: AbortController; promise: Promise<void> }>();
   private readonly owner = randomUUID();
   private readonly shutdown = new AbortController();
   private readonly tasks = new Map<string, { abort: AbortController; promise: Promise<void> }>();
@@ -39,6 +46,7 @@ export class AiService {
   private readonly transcription: TranscriptionService | undefined;
   constructor(private readonly store: WorkspaceStore, private readonly studio: StudioService, options: AiOptions = {}) {
     this.bridge = options.bridge ?? new OpenCodeBridge();
+    this.preferences = new AiPreferences(options.preferenceDirectory);
     this.transcription = options.transcription;
   }
   async setup(refresh = false): Promise<Setup> {
@@ -63,6 +71,80 @@ export class AiService {
     return structuredClone(await promise);
   }
   private ready() { if (this.shutdown.signal.aborted) throw new WorkspaceError(503, "runtime_closing"); }
+  private connectionScope(value: unknown) {
+    const { context } = aiConnectionScopeSchema.parse(value); this.ready(); this.store.studio.scope(context); return context;
+  }
+  private connectionKey(accountId: string, profileId: string) { return `${accountId}:${profileId}`; }
+  async connectionStatus(value: z.infer<typeof aiConnectionScopeSchema>): Promise<AiConnectionStatus> {
+    const context = this.connectionScope(value), setup = await this.setup(); this.connectionScope(value);
+    const profileId = setup.profileId ?? null, key = profileId ? this.connectionKey(context.accountId, profileId) : "";
+    const currentTest = this.connectionTests.get(key), lastTest = currentTest ? structuredClone(currentTest) : null;
+    let preference = null, preferenceError = this.preferenceErrors.get(key) ?? null;
+    if (profileId) {
+      try { preference = await this.preferences.read(context.accountId, profileId); }
+      catch { preferenceError = "ai_preference_invalid"; }
+    }
+    return { profileId, catalogSource: "general-catalog", preference, preferenceAvailable: !!preference && setup.available && setup.models.includes(preference.model),
+      authentication: lastTest?.error === "ai_auth_required" ? "required" : lastTest?.state === "succeeded" && setup.available && setup.models.includes(lastTest.model) ? "verified-by-inference" : "unverified",
+      lastTest: lastTest ? structuredClone(lastTest) : null, persistence: this.preferences.mode, preferenceError };
+  }
+  private async rememberModel(accountId: string, profileId: string | undefined, model: string) {
+    if (!profileId) return;
+    const key = this.connectionKey(accountId, profileId);
+    try {
+      await this.preferences.save(accountId, { profileId, model, provider: model.split("/")[0]!, succeededAt: stamp() });
+      this.preferenceErrors.delete(key);
+    } catch { this.preferenceErrors.set(key, "ai_preference_save_failed"); }
+  }
+  async rememberSuccessfulModel(context:WorkspaceContext,model:string) {
+    const assertActive=projectLifecycleGuard(this.store,context),setup=await this.setup();assertActive();
+    if(setup.available&&setup.models.includes(model))await this.rememberModel(context.accountId,setup.profileId,model);
+  }
+  async startConnectionTest(value: z.infer<typeof aiConnectionTestSchema>): Promise<AiConnectionTest> {
+    const input = aiConnectionTestSchema.parse(value), context = this.connectionScope({ context: input.context });
+    const assertActive = projectLifecycleGuard(this.store,context);
+    const setup = await this.setup(); assertActive(); this.connectionScope({ context });
+    if (!setup.available) throw new WorkspaceError(409, setup.error ?? "ai_unavailable");
+    if (!setup.models.includes(input.model)) throw new WorkspaceError(400, "ai_model_unavailable");
+    if (!setup.profileId || !this.bridge.testConnection) throw new WorkspaceError(409, "ai_connection_unsupported");
+    const profileId = setup.profileId, key = this.connectionKey(context.accountId, profileId);
+    if (this.connectionTests.get(key)?.state === "running" || this.connectionTasks.size >= 2) throw new WorkspaceError(409, "ai_busy");
+    const run: AiConnectionTest = { id: randomUUID(), profileId, model: input.model, state: "running", startedAt: stamp(), completedAt: null, error: null, diagnostic: null };
+    const abort = new AbortController(), signal = AbortSignal.any([abort.signal, this.shutdown.signal]);
+    this.connectionTests.set(key, run);
+    const promise = Promise.resolve().then(async () => {
+      // Fence project deletion even while the CLI is quiet; shutdown awaits this task.
+      const heartbeat = setInterval(() => { try { assertActive(); this.connectionScope({ context }); } catch { abort.abort(); } }, 500);
+      try {
+        const result = await this.bridge.testConnection!(input.model, signal, run.id);
+        signal.throwIfAborted(); assertActive(); this.connectionScope({ context });
+        if (result.profileId !== profileId) throw new Error("ai_configuration_unsafe");
+        const diagnostic = aiDiagnosticSchema.safeParse(result.diagnostic);
+        if (!diagnostic.success || diagnostic.data.requestId !== run.id) throw new Error("ai_protocol_error");
+        run.diagnostic = diagnostic.data;
+        await this.rememberModel(context.accountId, profileId, input.model);
+        run.state = "succeeded";
+      } catch (error) {
+        run.state = signal.aborted ? "cancelled" : "failed"; run.error = signal.aborted ? "ai_cancelled" : safeAiError(error);
+        const diagnostic = aiDiagnosticSchema.safeParse(error instanceof AiBridgeError ? error.diagnostic : null);
+        run.diagnostic = diagnostic.success && diagnostic.data.requestId === run.id ? diagnostic.data : {
+          stage: "inference", category: errorCategory(run.error), exitCode: null, durationMs: Date.now() - Date.parse(run.startedAt), requestId: run.id, version: setup.version };
+      } finally { clearInterval(heartbeat); run.completedAt = stamp(); }
+    }).finally(() => this.connectionTasks.delete(run.id));
+    this.connectionTasks.set(run.id, { context, abort, promise }); void promise.catch(() => undefined);
+    return structuredClone(run);
+  }
+  async cancelConnectionTest(id: string, value: z.infer<typeof aiConnectionScopeSchema>) {
+    idSchema.parse(id); const context = this.connectionScope(value), task = this.connectionTasks.get(id);
+    if (!task) {
+      const status = await this.connectionStatus(value);
+      if (status.lastTest?.id === id) return status; // Completion can win the cancel HTTP race.
+      throw new WorkspaceError(404, "ai_connection_test_not_found");
+    }
+    if (task.context.accountId !== context.accountId || task.context.projectId !== context.projectId) throw new WorkspaceError(404, "ai_connection_test_not_found");
+    task.abort.abort(); await task.promise;
+    return this.connectionStatus(value);
+  }
   private scope(value: { context: WorkspaceContext; destinationId: string; artifactId: string }) {
     const scope = aiScopeSchema.parse(value); this.store.studio.scope(scope.context);
     const account = this.store.listAccounts().find(a => a.id === scope.context.accountId);
@@ -118,8 +200,9 @@ export class AiService {
   }
   async start(value: z.infer<typeof aiRequestSchema>): Promise<AiRun> {
     this.ready(); const input = aiRequestSchema.parse(value);
+    const assertActive = projectLifecycleGuard(this.store,input.context);
     this.scope({ context: input.context, artifactId: input.artifactId, destinationId: input.destinationId });
-    const setup = await this.setup(); this.ready();
+    const setup = await this.setup(); this.ready(); assertActive();
     if (!setup.available) throw new WorkspaceError(409, setup.error ?? "ai_unavailable");
     if (!setup.models.includes(input.model)) throw new WorkspaceError(400, "ai_model_unavailable");
     if (this.tasks.size >= 2) throw new WorkspaceError(409, "ai_busy");
@@ -128,7 +211,7 @@ export class AiService {
     this.ready();
     const prompt = this.prepared(run);
     if (this.tasks.size >= 2) throw new WorkspaceError(409, "ai_busy");
-    this.store.studio.createAiRun(run, this.owner);
+    assertActive(); this.store.studio.createAiRun(run, this.owner);
     const abort = new AbortController(), signal = AbortSignal.any([abort.signal, this.shutdown.signal]);
     const promise = Promise.resolve().then(async () => {
       const heartbeat = setInterval(() => { try { this.store.studio.assertAiActive(run.id, this.owner); this.store.studio.saveAiRun(run, this.owner); } catch { abort.abort(); } }, 1000);
@@ -152,6 +235,7 @@ export class AiService {
         run.sessionId = result.sessionId; run.state = "ready";
       } catch (error) { run.state = signal.aborted ? "cancelled" : "failed"; run.error = signal.aborted ? null : cleanError(error); }
       finally { clearInterval(heartbeat); this.store.studio.saveAiRun(run, this.owner); }
+      if (run.state === "ready") await this.rememberModel(run.context.accountId, setup.profileId, run.model);
     }).finally(() => this.tasks.delete(run.id));
     this.tasks.set(run.id, { abort, promise }); void promise.catch(() => undefined); return run;
   }
@@ -183,7 +267,7 @@ export class AiService {
     for (const [key, grant] of this.grants) if (grant.expiresAt <= Date.now()) this.grants.delete(key);
     if (this.grants.size >= 32) throw new WorkspaceError(409, "mcp_grant_limit");
     const token = randomBytes(32).toString("hex");
-    const grant: Grant = { scope, includeMemory: input.includeMemory, includeTranscript: input.includeTranscript, expiresAt: Date.now() + 30 * 60_000, proposals: new Set(), renders: new Set(), transcripts: new Set() };
+    const grant: Grant = { scope, assertActive: projectLifecycleGuard(this.store,scope.context,"mcp_grant_invalid",401), includeMemory: input.includeMemory, includeTranscript: input.includeTranscript, expiresAt: Date.now() + 30 * 60_000, proposals: new Set(), renders: new Set(), transcripts: new Set() };
     this.grants.set(digest(token), grant);
     const candidates = [new URL("./mcp.mjs", import.meta.url), new URL("../../mcp-server/src/index.js", import.meta.url)];
     const entry = candidates.map(url => fileURLToPath(url)).concat([
@@ -206,6 +290,7 @@ export class AiService {
     if (!/^Bearer [a-f0-9]{64}$/.test(authorization)) throw new WorkspaceError(401, "mcp_grant_invalid");
     const key = digest(authorization.slice(7)), grant = this.grants.get(key);
     if (!grant || grant.expiresAt <= Date.now()) { this.grants.delete(key); throw new WorkspaceError(401, "mcp_grant_invalid"); }
+    try { grant.assertActive(); } catch (e) { this.grants.delete(key); throw e; }
     this.scope(grant.scope); return grant;
   }
   capabilities(authorization: string) {
@@ -282,6 +367,8 @@ export class AiService {
   }
   async close() {
     this.shutdown.abort(); this.grants.clear();
+    for (const task of this.connectionTasks.values()) task.abort.abort();
+    await Promise.allSettled([...this.connectionTasks.values()].map(task => task.promise));
     for (const task of this.tasks.values()) task.abort.abort();
     await Promise.allSettled([...this.tasks.values()].map(task => task.promise));
     await Promise.allSettled(this.discoveries);

@@ -1,4 +1,15 @@
 const tr = {
+  projectActions: "Proje işlemleri", renameProject: "Yeniden adlandır", editProjectInfo: "Proje bilgilerini düzenle",
+  projectTrash: "Çöp kutusu", trashProject: "Çöp kutusuna taşı", restoreProject: "Geri yükle", activeProjects: "Aktif projeler",
+  projectTrashTitle: "Proje çöp kutusuna taşınsın mı?", projectRestoreTitle: "Proje geri yüklensin mi?",
+  projectTrashHelp: "Kaynak dosyalar, çıktılar ve kurgu geçmişi korunur. Devam eden yerel işler iptal edilir; erişim izinleri ve gelecek zamanlamalar geçersizleşir. Uzaktaki bir platformun kabul ettiği yayın geri alınmaz.",
+  projectRestoreHelp: "Proje, medya ve düzenlemeler yeniden erişilebilir olur. İptal edilen işler ve zamanlamalar yeniden başlatılmaz; yeni işlemleri kendin başlatmalısın.",
+  projectInfoHelp: "Ad ve açıklama bu projeye kaydedilir. Ad en fazla 100, açıklama en fazla 500 karakter olabilir.",
+  projectTrashEmpty: "Çöp kutusu boş", projectTrashDescription: "Silinen projeleri buradan geri yükleyebilirsin. Dosyalar kalıcı olarak kaldırılmaz.",
+  projectSaved: "Proje güncellendi.", projectTrashed: "Proje çöp kutusuna taşındı.", projectRestored: "Proje geri yüklendi.",
+  projectConflict: "Proje başka bir pencerede değişti. Güncel sürümü yükleyip tekrar dene; yazdıkların otomatik olarak üzerine kaydedilmez.",
+  reloadProject: "Güncel sürümü yükle", projectUnavailable: "Proje artık bu listede bulunmuyor. Çalışma alanını yenile.",
+  updatedAt: "Son güncelleme", deletedAt: "Silinme tarihi", createdAt: "Oluşturulma tarihi",
   localOnly: "Yerel", legacyLocal: "Eski yerel hedef", localAccountNotice: "Yerel video projelerin. Sosyal hesap bağlamadan içe aktar, düzenle ve dışa aktar.",
   connectAccount: "Hesap bağla", connectedAccounts: "bağlı hesap", appSetup: "Uygulama ayarı", googleSignIn: "Google girişi", confirmChannel: "Kanalı doğrula", chooseChannel: "Bağlanacak kanalı seç", confirmConnection: "Bu kanalı bağla",
   expectedChannelOptional: "Gelişmiş: belirli bir kanalla sınırla (isteğe bağlı)", connectedChannels: "YouTube kanalların", noConnectedChannels: "Henüz bağlı bir kanal yok. Yukarıdaki adımlarla Google hesabına giriş yap.",
@@ -86,6 +97,17 @@ const tr = {
 };
 export type TextKey = keyof typeof tr;
 const en: Record<TextKey, string> = {
+  projectActions: "Project actions", renameProject: "Rename", editProjectInfo: "Edit project information",
+  projectTrash: "Trash", trashProject: "Move to trash", restoreProject: "Restore", activeProjects: "Active projects",
+  projectTrashTitle: "Move this project to trash?", projectRestoreTitle: "Restore this project?",
+  projectTrashHelp: "Source files, outputs and edit history are kept. Running local jobs are cancelled; access grants and future schedules are invalidated. A publication already accepted by a remote platform is not undone.",
+  projectRestoreHelp: "The project, media and edits become available again. Cancelled jobs and schedules are not restarted; start new work explicitly.",
+  projectInfoHelp: "The name and description are saved to this project. Names allow up to 100 characters and descriptions up to 500.",
+  projectTrashEmpty: "Trash is empty", projectTrashDescription: "Restore deleted projects here. Files are not permanently removed.",
+  projectSaved: "Project updated.", projectTrashed: "Project moved to trash.", projectRestored: "Project restored.",
+  projectConflict: "This project changed in another window. Load the latest revision and try again; your text is not automatically overwritten.",
+  reloadProject: "Load latest revision", projectUnavailable: "The project is no longer in this list. Refresh the workspace.",
+  updatedAt: "Last updated", deletedAt: "Deleted", createdAt: "Created",
   localOnly: "Local", legacyLocal: "Legacy local target", localAccountNotice: "Your local video projects. Import, edit and export without connecting a social account.",
   connectAccount: "Connect account", connectedAccounts: "connected accounts", appSetup: "App setup", googleSignIn: "Google sign-in", confirmChannel: "Confirm channel", chooseChannel: "Choose a channel to connect", confirmConnection: "Connect this channel",
   expectedChannelOptional: "Advanced: restrict to a channel (optional)", connectedChannels: "Your YouTube channels", noConnectedChannels: "No channel connected yet. Sign in to Google using the steps above.",

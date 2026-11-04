@@ -7,13 +7,14 @@ import { socialProviderSchema, socialTextCancelSchema, socialTextRequestSchema,
 import type { WorkspaceStore } from "../../../packages/storage/src/store.js";
 import { redactSensitiveText, WorkspaceError } from "../../../packages/storage/src/config.js";
 
-type StorePort = Pick<WorkspaceStore, "resolveContext" | "listAccounts" | "listMemory">;
+type StorePort = Pick<WorkspaceStore, "resolveContext" | "listAccounts" | "listMemory"> & Partial<Pick<WorkspaceStore,"projectAccessEpoch">>;
 export interface SocialTextOptions { bridge?: SocialOneShotPort; now?: () => number }
 type Pending = { input: SocialTextRequest; abort: AbortController; promise: Promise<SocialTextSuggestion> };
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\/[A-Za-z0-9][A-Za-z0-9._:/@+-]{0,255}$/u;
 const DISCOVERY = z.object({ available: z.boolean(), version: openCodeVersionSchema.nullable(), models: z.array(z.string().max(384).regex(MODEL)).max(10000),
   auth: z.literal("cli-managed"), error: z.string().max(100).nullable(),
-  catalog: z.object({ state: z.enum(["current", "stale"]), refreshedAt: z.string().datetime().nullable() }).strict().optional() }).strict();
+  catalog: z.object({ state: z.enum(["current", "stale"]), refreshedAt: z.string().datetime().nullable() }).strict().optional(),
+  profileId:z.string().max(128).optional() }).strict();
 const OUTPUT = z.object({ text: z.string().trim().min(1).max(2000), summary: z.string().trim().min(1).max(600),
   sessionId: z.string().regex(/^ses_[A-Za-z0-9_-]{1,200}$/u).nullable() }).strict();
 const BRIDGE_ERRORS = new Set(["ai_unavailable", "ai_configuration_unsafe", "ai_version_unsupported", "ai_catalog_refresh_failed", "ai_model_unavailable", "ai_protocol_error", "ai_output_limit", "ai_timeout", "ai_cancelled", "ai_process_failed", "ai_cleanup_failed", "ai_invalid_input", "ai_invalid_executable", "ai_invalid_timeout"]);
@@ -94,12 +95,16 @@ export class SocialTextService {
   }
   suggest(value: SocialTextRequest, signal?: AbortSignal): Promise<SocialTextSuggestion> {
     const input = socialTextRequestSchema.parse(value); this.capacity(); this.scope(input);
+    const epoch=this.store.projectAccessEpoch?.(input.context);
+    const assertActive=()=>{if(epoch!==undefined&&this.store.projectAccessEpoch?.(input.context)!==epoch)throw new WorkspaceError(409,"social_ai_scope_changed");};
     if (this.active.has(input.requestId)) throw new WorkspaceError(409, "social_ai_request_active");
     const abort = new AbortController();
+    const lifecycleTimer=setInterval(()=>{try{assertActive();}catch{abort.abort();}},1000);
+    lifecycleTimer.unref();
     const combined = AbortSignal.any([abort.signal, this.shutdown.signal, AbortSignal.timeout(120_000), ...(signal ? [signal] : [])]);
     let work: Promise<SocialTextSuggestion>;
     work = Promise.resolve().then(async () => {
-      const setup = await this.discovery(combined, false); combined.throwIfAborted(); this.ready();
+      const setup = await this.discovery(combined, false); combined.throwIfAborted(); this.ready(); assertActive();
       if (!setup.available) throw new WorkspaceError(409, setup.error ?? "social_ai_unavailable");
       if (!setup.models.includes(input.modelId)) throw new WorkspaceError(400, "social_ai_model_unavailable");
       const provider = this.scope(input), memory = this.memory(input);
@@ -115,6 +120,7 @@ export class SocialTextService {
       combined.throwIfAborted(); this.scope(input);
       const output = OUTPUT.safeParse(await this.bridge.complete({ modelId: input.modelId, prompt }, combined));
       combined.throwIfAborted(); this.ready();
+      assertActive();
       if (!output.success) throw new WorkspaceError(502, "social_ai_protocol_error");
       if (this.scope(input) !== provider) throw new WorkspaceError(409, "social_ai_scope_changed");
       const safe = OUTPUT.safeParse({ ...output.data, text: cut(redactSensitiveText(output.data.text), 2000), summary: cut(redactSensitiveText(output.data.summary), 600) });
@@ -130,7 +136,7 @@ export class SocialTextService {
         combined.reason instanceof Error && combined.reason.name === "TimeoutError" ? "social_ai_timeout" : "social_ai_cancelled");
       const code = errorCode(error);
       throw new WorkspaceError(error instanceof WorkspaceError ? error.status : code === "social_ai_timeout" ? 504 : 502, code);
-    }).finally(() => { this.operations.delete(work); this.active.delete(input.requestId); });
+    }).finally(() => { clearInterval(lifecycleTimer); this.operations.delete(work); this.active.delete(input.requestId); });
     this.active.set(input.requestId, { input, abort, promise: work }); this.operations.add(work); return work;
   }
   async cancel(value: z.infer<typeof socialTextCancelSchema>): Promise<{ cancelled: true }> {

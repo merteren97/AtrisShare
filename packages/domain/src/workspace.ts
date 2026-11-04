@@ -10,6 +10,12 @@ export const createLocalAccountSchema = z.object({ displayName: nameSchema, plat
 export const createProjectSchema = z.object({
   accountId: idSchema, name: nameSchema, description: z.string().trim().max(500).default("")
 }).strict();
+export const projectActionSchema = z.object({
+  context: contextSchema, expectedRevision: z.number().int().positive()
+}).strict();
+export const updateProjectSchema = projectActionSchema.extend({
+  name: nameSchema, description: z.string().trim().max(500)
+}).strict();
 export const memoryKindSchema = z.enum(["brand-voice", "audience", "decision", "edit-history", "publication"]);
 export const reviewStateSchema = z.enum(["suggested", "confirmed"]);
 const memoryFields = {
@@ -28,6 +34,8 @@ export const deleteMemorySchema = z.object({
 export type WorkspaceContext = z.infer<typeof contextSchema>;
 export type CreateAccountInput = z.infer<typeof createAccountSchema>;
 export type CreateProjectInput = z.infer<typeof createProjectSchema>;
+export type ProjectActionInput = z.infer<typeof projectActionSchema>;
+export type UpdateProjectInput = z.infer<typeof updateProjectSchema>;
 export type CreateMemoryInput = z.infer<typeof createMemorySchema>;
 export type UpdateMemoryInput = z.infer<typeof updateMemorySchema>;
 
@@ -46,6 +54,9 @@ export interface WorkspaceProject {
   name: string;
   description: string;
   createdAt: string;
+  revision: number;
+  updatedAt: string;
+  deletedAt: string | null;
 }
 export interface WorkspaceMemory {
   id: string;

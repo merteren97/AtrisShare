@@ -1,16 +1,20 @@
 import assert from "node:assert/strict";
 import { spawn as nodeSpawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { createHash } from "node:crypto";
 import { access, mkdtemp, readFile, readdir, rm, truncate, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { PassThrough } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { test } from "node:test";
 import { OpenCodeBridge } from "../dist/packages/ai-bridge/src/opencode.js";
+import { aiDiagnosticSchema } from "../dist/packages/domain/src/ai.js";
 
 const AGENT = "atrisshare-proposal";
 const MODEL = "fixture/scoped-model";
+const PROFILE = createHash("sha256").update(JSON.stringify([process.execPath, "1.19.5", process.env.XDG_DATA_HOME && isAbsolute(process.env.XDG_DATA_HOME)
+  ? process.env.XDG_DATA_HOME : join(homedir(), ".local", "share"), "isolated-official-auth-v1"])).digest("hex");
 const EDIT = { inSeconds: 0, outSeconds: 2, crop: "vertical", gainDb: -3, caption: "İyi 🎬" };
 const PROPOSAL = { summary: "Synthetic proposal 🎬", edit: EDIT };
 const SESSION = "ses_fixture";
@@ -80,7 +84,7 @@ async function cleaned(calls) {
 
 test("discovery validates isolated config and actual primary agent, deduplicates only CLI-reported IDs", async () => {
   const { bridge, calls } = fixture();
-  assert.deepEqual(await bridge.discover(), { available: true, version: "1.19.5", models: [MODEL, "fixture/nested/model:latest"], auth: "cli-managed", error: null });
+  assert.deepEqual(await bridge.discover(), { available: true, version: "1.19.5", models: [MODEL, "fixture/nested/model:latest"], auth: "cli-managed", error: null, profileId: PROFILE });
   assert.deepEqual(calls.map(call => call.args), [["--version", "--pure"], ["debug", "config", "--pure"],
     ["debug", "agent", AGENT, "--pure"], ["models", "--pure"]]);
   assert.equal(new Set(calls.map(call => call.options.cwd)).size, 1);
@@ -96,6 +100,17 @@ test("proposal writes prompt only to stdin; exact schema result and fixed redact
     "--agent", AGENT, "--title", "AtrisShare proposal"]);
   assert.ok(calls.every(call => !call.args.some(arg => arg.includes(PROMPT) || arg === "--auto")));
   await cleaned(calls);
+});
+
+test("multi-clip operation proposals use the same deny-all JSONL process and reject unsupported commands",async()=>{
+  const proposal={summary:"Reduce selected clip",operations:[{type:"setClipGain",clipId:"c7476c00-2905-42e2-b021-721e3f465a7c",gainDb:-6}]};
+  const f=fixture({run:()=>print(success(JSON.stringify(proposal)))});
+  assert.deepEqual(await f.bridge.proposeSequence({model:MODEL,prompt:PROMPT},signal()),{...proposal,sessionId:SESSION});
+  assert.ok(f.calls.every(c=>!c.args.includes(PROMPT)));await cleaned(f.calls);
+  for(const operations of [[{type:"publish",destinationId:"untrusted"}],[{type:"setClipGain",clipId:"../escape",gainDb:0}],[{type:"setClipGain",clipId:proposal.operations[0].clipId,gainDb:25}]]){
+    const invalid=fixture({run:()=>print(success(JSON.stringify({summary:"Invalid",operations})))});
+    await assert.rejects(invalid.bridge.proposeSequence({model:MODEL,prompt:PROMPT},signal()),/ai_protocol_error/);await cleaned(invalid.calls);
+  }
 });
 
 test("child environment excludes parent tokens, OAuth, ATRIS_SHARE_*, Node options and config while preserving only credential store path", async t => {
@@ -179,7 +194,7 @@ test("unsafe effective config fails closed before debug agent, models or inferen
   for (const [name, config] of Object.entries(cases)) await t.test(name, async () => {
     const { bridge, calls } = fixture({ config });
     const result = await bridge.discover();
-    assert.deepEqual(result, { available: false, version: "1.19.5", models: [], auth: "cli-managed", error: "ai_configuration_unsafe" });
+    assert.deepEqual(result, { available: false, version: "1.19.5", models: [], auth: "cli-managed", error: "ai_configuration_unsafe", profileId: PROFILE });
     assert.equal(calls.length, 2);
     await cleaned(calls);
   });
@@ -541,7 +556,7 @@ test("swallowed download failure retains stale IDs, timestamp and version, does 
   const before = await readFile(file, "utf8");
   state.mode = "missing";
   const failed = await bridge.discover(undefined, { refresh: true });
-  assert.deepEqual(failed, { available: false, version: "1.19.5", models: [NEW_MODEL], auth: "cli-managed",
+  assert.deepEqual(failed, { available: false, version: "1.19.5", models: [NEW_MODEL], auth: "cli-managed", profileId: PROFILE,
     error: "ai_catalog_refresh_failed", catalog: { state: "stale", refreshedAt: found.catalog.refreshedAt } });
   assert.equal(await readFile(file, "utf8"), before);
   state.mode = "ok"; state.models = ["fixture/recovered"];
@@ -591,7 +606,7 @@ test("missing/corrupt/oversized refresh files cannot be mistaken for CLI success
   for (const mode of ["missing", "corrupt", "shape", "oversized", "exit"]) await t.test(mode, async t => {
     const directory = await catalogDirectory(t);
     const { bridge, calls } = catalogFixture({ catalogDirectory: directory, state: { models: [NEW_MODEL], mode, refreshes: 0 } });
-    assert.deepEqual(await bridge.discover(), { available: false, version: "1.19.5", models: [], auth: "cli-managed",
+    assert.deepEqual(await bridge.discover(), { available: false, version: "1.19.5", models: [], auth: "cli-managed", profileId: PROFILE,
       error: "ai_catalog_refresh_failed", catalog: { state: "stale", refreshedAt: null } });
     assert.deepEqual(await readdir(directory), []);
     await assert.rejects(bridge.propose({ model: NEW_MODEL, prompt: PROMPT }, () => {}, signal()), code("ai_catalog_refresh_failed"));
@@ -736,4 +751,76 @@ test("unsupported versions preserve only bounded semver and fail closed before c
   for (const catalogDirectory of ["relative/catalog", "bad\0path"]) {
     assert.throws(() => new OpenCodeBridge({ catalogDirectory }), code("ai_invalid_catalog_directory"));
   }
+});
+
+test("explicit connection test makes one tiny real child request, uses strict JSONL and returns only allowlisted diagnostics", async () => {
+  const { bridge, calls } = fixture({ run: () => `let input='';process.stdin.on('data',c=>input+=c);process.stdin.on('end',()=>{
+    if(input.length>250||!input.includes('Connection test only')||input.includes('artifactId')||input.includes('transcript'))process.exit(9);
+    ${print(success('{"ok":true}'))}});` });
+  const discovery = await bridge.discover();
+  assert.equal(calls.some(call => call.args[0] === "run"), false, "discovery is not inference");
+  const result = await bridge.testConnection(MODEL, signal());
+  assert.equal(result.profileId, discovery.profileId);
+  assert.equal(result.version, "1.19.5");
+  assert.equal(aiDiagnosticSchema.safeParse(result.diagnostic).success, true);
+  assert.equal(result.diagnostic.category, "none");
+  assert.equal(calls.filter(call => call.args[0] === "run").length, 1);
+  assert.deepEqual(Object.keys(result).sort(), ["diagnostic", "profileId", "version"]);
+  assert.ok(!JSON.stringify(result).includes(SESSION));
+  await cleaned(calls);
+});
+
+test("connection failures distinguish auth, model access, quota and network without leaking stderr or error event text", async t => {
+  const cases = [
+    ["401 Unauthorized Bearer secret-token", "ai_auth_required", "authentication"],
+    ["403 forbidden C:\\private\\credentials", "ai_access_denied", "access"],
+    ["429 rate limit secret-token", "ai_quota_exceeded", "quota"],
+    ["TLS certificate proxy error secret-token", "ai_network_error", "network"],
+    ["unknown error secret-token", "ai_process_failed", "process"],
+  ];
+  for (const [raw, expected, category] of cases) await t.test(category, async () => {
+    const { bridge, calls } = fixture({ run: () => `process.stderr.write(${JSON.stringify(raw)});process.exitCode=7;` });
+    await assert.rejects(bridge.testConnection(MODEL, signal()), error => {
+      assert.equal(error.message, expected); assert.equal(error.exitCode, 7);
+      assert.equal(error.diagnostic.stage, "inference"); assert.equal(error.diagnostic.category, category);
+      assert.equal(aiDiagnosticSchema.safeParse(error.diagnostic).success, true);
+      assert.ok(!JSON.stringify(error).includes("secret-token")); assert.ok(!JSON.stringify(error).includes("credentials")); return true;
+    });
+    await cleaned(calls);
+  });
+  for (const [statusCode, expected] of [[401, "ai_auth_required"], [403, "ai_access_denied"], [429, "ai_quota_exceeded"]]) {
+    const { bridge, calls } = fixture({ run: () => print(jsonl([{ type: "error", error: { name: "APIError", data: { statusCode, message: "Bearer secret-token" } } }])) });
+    await assert.rejects(bridge.testConnection(MODEL, signal()), error => {
+      assert.equal(error.message, expected); assert.equal(error.diagnostic.stage, "protocol");
+      assert.ok(!JSON.stringify(error).includes("secret-token")); return true;
+    });
+    await cleaned(calls);
+  }
+});
+
+test("connection test rejects successful exits with wrong response or invalid protocol and keeps version/config/model gates", async () => {
+  for (const value of ['{"ok":false}', '{"ok":true,"token":"secret-token"}', JSON.stringify(PROPOSAL)]) {
+    const { bridge, calls } = fixture({ run: () => print(success(value)) });
+    await assert.rejects(bridge.testConnection(MODEL, signal()), error => error.message === "ai_protocol_error" && error.diagnostic.category === "protocol");
+    await cleaned(calls);
+  }
+  for (const [options, expected] of [[{ version: "1.20.0" }, "ai_version_unsupported"], [{ models: "" }, "ai_model_unavailable"],
+    [{ config: config => { config.tools.bash = true; } }, "ai_configuration_unsafe"]]) {
+    const { bridge, calls } = fixture(options);
+    await assert.rejects(bridge.testConnection(MODEL, signal()), code(expected));
+    assert.ok(calls.every(call => call.args[0] !== "run")); await cleaned(calls);
+  }
+});
+
+test("connection test cancellation waits for the child close and permits a new successful attempt", async () => {
+  let hang = true;
+  const { bridge, calls } = fixture({ run: () => hang ? "setInterval(()=>{},1000);" : print(success('{"ok":true}')) });
+  const abort = new AbortController(), pending = bridge.testConnection(MODEL, abort.signal);
+  const rejected = assert.rejects(pending, error => error.message === "ai_cancelled" && error.diagnostic.category === "cancelled");
+  await waitForRun(calls); abort.abort(new Error("secret-token")); await rejected; await cleaned(calls);
+  hang = false;
+  assert.equal((await bridge.testConnection(MODEL, signal())).diagnostic.category, "none"); await cleaned(calls);
+  const timeout = fixture({ timeoutMs: 1200, run: () => "setInterval(()=>{},1000);" });
+  await assert.rejects(timeout.bridge.testConnection(MODEL, signal()), error => error.message === "ai_timeout" && error.diagnostic.category === "timeout");
+  await cleaned(timeout.calls);
 });

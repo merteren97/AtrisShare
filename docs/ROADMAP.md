@@ -22,6 +22,12 @@ live acceptance is not missing feature implementation or a blocker to subsequent
 
 ## Ordering
 
+The project-sequence extension is now implemented on top of the earlier limited
+editor: multi-source/repeated clips, revisioned batch history, rendered preview and
+export, AI/MCP operation proposals, inference connection tests and project lifecycle.
+See [scope and limits](SEQUENCES.md). Its real-model/installed-desktop journey is an
+additional Phase 9 acceptance row, not implied by controlled engineering tests.
+
 Run Phase 9's consolidated live/all-feature acceptance against the Phase 8 package. Local regressions,
 builds and rendered/native UI checks continue throughout as engineering evidence.
 Every live upload needs explicit human approval of the current destination/payload/

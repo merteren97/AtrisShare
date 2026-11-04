@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from "react";
 import { Check, CircleAlert, Copy, LoaderCircle, RefreshCw, Sparkles } from "lucide-react";
 import { editSchema, type MediaEdit } from "../../../packages/domain/src/media.js";
+import type { AiConnectionStatus, AiConnectionTest } from "../../../packages/domain/src/ai.js";
 import type { WorkspaceAccount, WorkspaceContext } from "../../../packages/domain/src/workspace.js";
 import type { StudioArtifact, StudioRender } from "./Studio";
 import { mediaBlob, request } from "./api";
@@ -25,7 +26,7 @@ interface AiRun {
 interface Timeline { revision: number; cursor: number; edits: MediaEdit[] }
 interface Snapshot { tools: { available: boolean }; renders: StudioRender[]; artifacts: StudioArtifact[] }
 interface Grant { origin: string; token: string; expiresAt: string; tools: string[]; command: { command: string; args: string[] } }
-type Operation = "generate" | "cancel" | "accept" | "reject" | "preview" | "grant" | "revoke";
+type Operation = "generate" | "cancel" | "accept" | "reject" | "preview" | "grant" | "revoke" | "test" | "cancelTest";
 const BLOB_LIMIT = 256 * 1024 * 1024;
 const upsert = <T extends { id: string },>(items: T[], value: T) => [value, ...items.filter(item => item.id !== value.id)];
 function sourceTime(value: number): string {
@@ -59,6 +60,9 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<Timeline | null>(null);
   const [model, setModel] = useState("");
+  const [connection, setConnection] = useState<AiConnectionStatus | null>(null);
+  const [connectionPollError, setConnectionPollError] = useState<unknown>(null);
+  const [connectionEpoch, setConnectionEpoch] = useState(0);
   const [prompt, setPrompt] = useState("");
   const [includeMemory, setIncludeMemory] = useState(false);
   const [includeTranscript, setIncludeTranscript] = useState(false);
@@ -87,6 +91,9 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
   const runsPath = `/api/ai/runs?${scopeQuery}&artifactId=${encodeURIComponent(artifact.id)}`;
   const timelinePath = `/api/media/${encodeURIComponent(artifact.id)}/timeline?${scopeQuery}`;
   const studioPath = `/api/studio?${scopeQuery}`;
+  const connectionPath = `/api/ai/connection?${scopeQuery}`;
+  const connectionRunning = connection?.lastTest?.state === "running";
+  const selectedAuthentication = connection?.lastTest?.model === model && setup?.available && setup.models.includes(model) ? connection.authentication : "unverified";
   const inScope = useCallback((run: AiRun) => run.artifactId === artifact.id && run.context.accountId === context.accountId && run.context.projectId === context.projectId && run.destinationId === account.destinationId,
     [artifact.id, context.accountId, context.projectId, account.destinationId]);
   const selected = runs.find(run => run.id === selectedId) ?? null;
@@ -110,12 +117,14 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
       request<AiSetup>(`/api/ai/setup${refresh ? "?refresh=1" : ""}`, "GET", undefined, signal),
       request<AiRun[]>(runsPath, "GET", undefined, signal),
       request<Snapshot>(studioPath, "GET", undefined, signal),
+      request<AiConnectionStatus>(connectionPath, "GET", undefined, signal),
     ]);
     if (signal.aborted) return;
-    const [discovery, history, studio] = results;
+    const [discovery, history, studio, health] = results;
     if (discovery.status === "fulfilled") {
       setSetup(discovery.value);
-      setModel(current => discovery.value.models.includes(current) ? current : "");
+      // Keep a disappeared selection visible and invalid; never select a fallback.
+      setModel(current => current || (health.status === "fulfilled" ? health.value.preference?.model ?? "" : ""));
     } else setSetup(previous => previous ? { ...previous, available: false, error: "ai_catalog_refresh_failed",
       catalog: { state: "stale", refreshedAt: previous.catalog?.refreshedAt ?? null } } : null);
     if (history.status === "fulfilled") {
@@ -124,10 +133,23 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
       setPollError(null);
     }
     if (studio.status === "fulfilled") setSnapshot(studio.value); else setSnapshot(null);
+    if (health.status === "fulfilled") { setConnection(health.value); setConnectionPollError(null); }
     const failure = results.find(result => result.status === "rejected");
     if (failure?.status === "rejected") setLoadError(failure.reason);
     loadingRef.current = false; setLoading(false); setCompareEpoch(value => value + 1);
-  }, [runsPath, studioPath, inScope]);
+  }, [runsPath, studioPath, connectionPath, inScope]);
+
+  useEffect(() => {
+    if (!connectionRunning || operation) return;
+    const abort = new AbortController();
+    const timer = setTimeout(() => {
+      void request<AiConnectionStatus>(connectionPath, "GET", undefined, abort.signal).then(value => {
+        if (!abort.signal.aborted) { setConnection(value); setConnectionPollError(null); }
+      }).catch(error => { if (!abort.signal.aborted) setConnectionPollError(error); })
+        .finally(() => { if (!abort.signal.aborted) setConnectionEpoch(value => value + 1); });
+    }, 1000);
+    return () => { clearTimeout(timer); abort.abort(); };
+  }, [connectionRunning, connectionPath, operation, connectionEpoch]);
 
   useEffect(() => {
     lifetime.current = new AbortController(); loadingRef.current = false;
@@ -189,10 +211,28 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
   }
   function generate(event: FormEvent) {
     event.preventDefault();
-    if (!available || loading || isRunning || !timeline || comparing || !setup?.models.includes(model) || !prompt.trim() || prompt.length > 4000 || includeTranscript && !transcriptReady) return;
+    if (!available || loading || isRunning || connectionRunning || !timeline || comparing || !setup?.models.includes(model) || !prompt.trim() || prompt.length > 4000 || includeTranscript && !transcriptReady) return;
     void act("generate", async signal => {
       const run = await request<AiRun>("/api/ai/runs", "POST", { context, destinationId: account.destinationId, artifactId: artifact.id, model, prompt: prompt.trim(), includeMemory, includeTranscript, allowRemote: true }, signal);
       if (!signal.aborted) updateRun(run);
+    });
+  }
+  function testConnection() {
+    if (!setup?.available || !setup.models.includes(model) || connectionRunning) return;
+    void act("test", async signal => {
+      const test = await request<AiConnectionTest>("/api/ai/connection/tests", "POST", { context, model, allowRemote: true }, signal);
+      if (!signal.aborted) {
+        setConnection(current => current ? { ...current, lastTest: test } : current);
+        const status = await request<AiConnectionStatus>(connectionPath, "GET", undefined, signal);
+        if (!signal.aborted) setConnection(status);
+      }
+    });
+  }
+  function cancelTest() {
+    if (!connection?.lastTest || !connectionRunning) return;
+    void act("cancelTest", async signal => {
+      const value = await request<AiConnectionStatus>(`/api/ai/connection/tests/${encodeURIComponent(connection.lastTest!.id)}/cancel`, "POST", { context }, signal);
+      if (!signal.aborted) setConnection(value);
     });
   }
   function runAction(name: "cancel" | "accept" | "reject" | "preview") {
@@ -205,7 +245,7 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
     });
   }
   function editRequest(run: AiRun) {
-    setPrompt(run.prompt); setModel(setup?.models.includes(run.model) ? run.model : ""); setIncludeMemory(run.includeMemory);
+    setPrompt(run.prompt); setModel(run.model); setIncludeMemory(run.includeMemory);
     setIncludeTranscript(false);
     setActionError(null); promptInput.current?.focus();
   }
@@ -257,8 +297,34 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
     {!!loadError && <ErrorMessage error={loadError} t={t} retry={() => { void load(); }} disabled={disabled} />}
     <TranscriptionPanel artifact={artifact} context={context} language={language} onChanged={setTranscript} />
     <form onSubmit={generate} className="assistant-composer">
-      <label className="form-field" htmlFor={`${id}-model`}>{t("model")}<select id={`${id}-model`} value={model} disabled={disabled || !setup?.available} onChange={event => setModel(event.target.value)} required>
-        <option value="" disabled>{t("chooseModel")}</option>{setup?.models.map(value => <option value={value} key={value}>{value}</option>)}</select></label>
+      <label className="form-field" htmlFor={`${id}-model`}>{t("model")}<select id={`${id}-model`} value={model} disabled={disabled || connectionRunning || !setup?.available} onChange={event => setModel(event.target.value)} required>
+        <option value="" disabled>{t("chooseModel")}</option>{model && !setup?.models.includes(model) && <option value={model} disabled>{model} — {t("modelMissing")}</option>}{setup?.models.map(value => <option value={value} key={value}>{value}</option>)}</select></label>
+      {model && !setup?.models.includes(model) && <p className="studio-inline-error" role="alert">{t("selectionMissing")}</p>}
+      <section className="assistant-connection" aria-label={t("connectionTitle")}>
+        <h3>{t("connectionTitle")}</h3>
+        <p className="studio-help">{t("catalogNotAuth")}</p>
+        <p className="assistant-connection-status" role="status">{t(selectedAuthentication === "required" ? "authRequired" : selectedAuthentication === "verified-by-inference" ? "authVerified" : "authUnverified")}</p>
+        <p className="assistant-disclosure" id={`${id}-test-disclosure`}>{t("testDisclosure")}</p>
+        <div className="assistant-connection-actions">
+          <button className="button secondary" type="button" aria-describedby={`${id}-test-disclosure`} disabled={disabled || connectionRunning || !connection?.profileId || !setup?.available || !setup.models.includes(model)} onClick={testConnection}>
+            {connectionRunning && <LoaderCircle size={13} className="spinning" />}{t(connectionRunning ? "testRunning" : connection?.lastTest ? "testAgain" : "testConnection")}</button>
+          {connectionRunning && <button className="text-button" type="button" disabled={disabled} onClick={cancelTest}>{t(operation === "cancelTest" ? "cancelling" : "cancelTest")}</button>}
+        </div>
+        {connection?.lastTest && <div className="assistant-test-result" role="status">
+          <strong>{t(connection.lastTest.state === "succeeded" ? "testSucceeded" : connection.lastTest.state === "failed" ? "testFailed" : connection.lastTest.state === "cancelled" ? "testCancelled" : "testRunning")}</strong>
+          <code>{connection.lastTest.model}</code>
+          {connection.lastTest.error && <p className="studio-inline-error">{assistantError(connection.lastTest.error, t)}</p>}
+          {connection.lastTest.diagnostic && <details className="assistant-details"><summary>{t("safeDiagnostic")}</summary><dl className="assistant-binding">
+            <div><dt>{t("stage")}</dt><dd>{connection.lastTest.diagnostic.stage}</dd></div><div><dt>{t("category")}</dt><dd>{connection.lastTest.diagnostic.category}</dd></div>
+            <div><dt>{t("elapsed")}</dt><dd>{connection.lastTest.diagnostic.durationMs} ms</dd></div><div><dt>{t("exitCode")}</dt><dd>{connection.lastTest.diagnostic.exitCode ?? "—"}</dd></div>
+            <div><dt>{t("setup")}</dt><dd>{connection.lastTest.diagnostic.version ?? "—"}</dd></div><div><dt>{t("requestId")}</dt><dd><code>{connection.lastTest.diagnostic.requestId}</code></dd></div>
+          </dl></details>}
+        </div>}
+        {connection?.preference && <p className="studio-help">{t("lastSuccess")} <time dateTime={connection.preference.succeededAt}>{new Date(connection.preference.succeededAt).toLocaleString(language)}</time><br /><code>{connection.preference.model}</code></p>}
+        {(connection?.preferenceError || connection?.persistence === "session") && <p className="studio-callout">{t(connection.preferenceError ? "preferenceFailed" : "preferenceSession")}</p>}
+        {!!connectionPollError && <ErrorMessage error={connectionPollError} t={t} disabled={disabled} retry={() => { setConnectionEpoch(value => value + 1); void load(); }} />}
+        <details className="assistant-details"><summary>{t("connectionSupport")}</summary><p className="studio-help">{t("connectionSupportHelp")}</p></details>
+      </section>
       <label className="form-field" htmlFor={`${id}-prompt`}>{t("request")}<textarea ref={promptInput} id={`${id}-prompt`} rows={4} maxLength={4000} required value={prompt} disabled={!!operation} aria-describedby={`${id}-disclosure`} onChange={event => setPrompt(event.target.value)} /></label>
       <span className="assistant-counter">{prompt.length.toLocaleString(language)} / {(4000).toLocaleString(language)}</span>
       <label className="studio-checkbox"><input type="checkbox" checked={includeMemory} disabled={!!operation} aria-describedby={`${id}-memory-help`} onChange={event => setIncludeMemory(event.target.checked)} />{t("memory")}</label>
@@ -267,7 +333,7 @@ function AssistantWorkspace({ artifact, context, account, language, onApplied }:
       <p className="studio-help" id={`${id}-transcript-help`}>{t("includeTranscriptHelp")}</p>
       <p className="assistant-disclosure" id={`${id}-disclosure`}>{t("disclosure")}</p>
       {includeTranscript && transcriptReady && <p className="assistant-disclosure">{t("transcriptDisclosure")}</p>}
-      <button className="button primary studio-full-width" type="submit" disabled={disabled || !available || isRunning || !timeline || comparing || !setup?.models.includes(model) || !prompt.trim() || includeTranscript && !transcriptReady}>
+      <button className="button primary studio-full-width" type="submit" disabled={disabled || connectionRunning || !available || isRunning || !timeline || comparing || !setup?.models.includes(model) || !prompt.trim() || includeTranscript && !transcriptReady}>
         {operation === "generate" ? <LoaderCircle size={14} className="spinning" /> : <Sparkles size={14} />}{t(operation === "generate" ? "generating" : actionError?.operation === "generate" ? "retryGenerate" : "generate")}</button>
     </form>
     {!!actionError && actionError.operation !== "grant" && actionError.operation !== "revoke" && <div className="studio-inline-error" role="alert">{assistantError(actionError.error, t)}</div>}

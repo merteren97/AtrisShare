@@ -8,11 +8,19 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 import { editSchema } from "../../../packages/domain/src/media.js";
 import { APP_VERSION } from "../../../packages/domain/src/workspace.js";
+import { sequenceOperationSchema } from "../../../packages/domain/src/sequence.js";
 
 const RESPONSE_LIMIT = 1024 * 1024;
 const HTTP_TIMEOUT_MS = 30_000;
 const emptyArguments = z.object({}).strict();
 const toolSchemas = {
+  sequence_sources: emptyArguments,
+  sequence_read: emptyArguments,
+  sequence_propose: z.object({expectedRevision:z.number().int().nonnegative(),summary:z.string().min(1).max(2000),operations:z.array(sequenceOperationSchema).min(1).max(128)}).strict(),
+  sequence_preview: z.object({proposalId:z.string().uuid()}).strict(),
+  sequence_render_status: z.object({jobId:z.string().uuid()}).strict(),
+  sequence_render_cancel: z.object({jobId:z.string().uuid()}).strict(),
+  sequence_export: z.object({expectedRevision:z.number().int().nonnegative()}).strict(),
   media_inspect: emptyArguments,
   timeline_read: emptyArguments,
   memory_read: emptyArguments,
@@ -43,11 +51,12 @@ const capabilitiesSchema = z.object({
   scope: z.object({
     accountId: z.string().min(1).max(200),
     projectId: z.string().min(1).max(200),
-    artifactId: z.string().min(1).max(200),
+    artifactId: z.string().min(1).max(200).optional(),
+    sequenceId: z.string().uuid().optional(), sourceIds:z.array(z.string().uuid()).max(128).optional(),
     destinationId: z.string().min(1).max(200)
   }).strict(),
   includeMemory: z.boolean(), includeTranscript: z.boolean().default(false)
-}).strict();
+}).strict().refine(value=>Boolean(value.scope.artifactId)!==Boolean(value.scope.sequenceId&&value.scope.sourceIds?.length),"Explicit artifact or sequence capability required");
 
 type ErrorCode = "mcp_invalid_configuration" | "mcp_capabilities_invalid" | "mcp_grant_expired"
   | "mcp_grant_rejected" | "mcp_http_error" | "mcp_http_timeout" | "mcp_response_limit"

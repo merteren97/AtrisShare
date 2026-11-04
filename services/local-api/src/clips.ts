@@ -10,6 +10,7 @@ import { redactSensitiveText, WorkspaceError } from "../../../packages/storage/s
 import type { WorkspaceStore } from "../../../packages/storage/src/store.js";
 import type { StudioService } from "./studio.js";
 import type { TranscriptionService } from "./transcription.js";
+import { projectLifecycleGuard } from "./project-lifecycle.js";
 
 export interface ClipOptions { bridge?: Pick<OpenCodeBridge, "discover" | "rankClips"> }
 const hash = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
@@ -52,6 +53,7 @@ export class ClipService {
   list(artifactId: string, context: WorkspaceContext) { return this.store.clips.list(artifactId, context); }
   async start(value: z.infer<typeof clipRequestSchema>) {
     this.ready(); const input = clipRequestSchema.parse(value);
+    const assertActive = projectLifecycleGuard(this.store,input.context);
     const artifact = this.source(input.artifactId, input.context, input.destinationId);
     const transcript = this.transcription.latest(artifact.id, input.context);
     if (!transcript || transcript.state !== "succeeded" || transcript.sourceSha256 !== artifact.sha256 || !transcript.segments.length) throw new WorkspaceError(409, "transcript_not_ready");
@@ -63,7 +65,7 @@ export class ClipService {
       state: "running", stage: "analysis", candidates: [], signals: { scenes: [], silences: [] },
       history: { revision: input.options.includeHistory ? timeline.revision : 0, channelVideoId: artifact.channelVideoId },
       sessionId: null, truncated: transcript.segments.length > 1000, error: null, createdAt: new Date().toISOString() };
-    await this.guard(run); this.ready();
+    await this.guard(run); this.ready(); assertActive();
     if (this.tasks.size) throw new WorkspaceError(409, "clip_busy");
     this.store.clips.create(run, this.owner);
     this.launch(run, async signal => {

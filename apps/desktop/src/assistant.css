@@ -8,6 +8,15 @@
 .assistant-setup strong { font-size: 11px; font-weight: 500; }
 .assistant-setup span { color: var(--muted); font-size: 10px; overflow-wrap: anywhere; }
 .assistant-composer { min-width: 0; }
+.assistant-connection { border: 1px solid var(--line); border-radius: 5px; padding: 12px; margin: 0 0 18px; min-width: 0; }
+.assistant-connection h3 { font-size: 11px; font-weight: 550; margin: 0 0 8px; }
+.assistant-connection-status { font-size: 10px; line-height: 1.8; color: var(--muted); }
+.assistant-connection-actions { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; margin-top: 12px; }
+.assistant-connection-actions .button { white-space: normal; }
+.assistant-test-result { display: grid; gap: 7px; margin-top: 12px; font-size: 10px; line-height: 1.8; }
+.assistant-connection code, .assistant-connection dd { overflow-wrap: anywhere; min-width: 0; }
+.assistant-connection .assistant-binding > div { flex-wrap: wrap; }
+.assistant-connection .assistant-binding { margin-bottom: 0; }
 .assistant-panel select, .assistant-panel textarea { width: 100%; min-width: 0; }
 .assistant-panel textarea { resize: vertical; min-height: 84px; max-height: 300px; }
 .assistant-counter { display: block; text-align: right; color: var(--faint); font-size: 9px; font-variant-numeric: tabular-nums; margin-top: -9px; }

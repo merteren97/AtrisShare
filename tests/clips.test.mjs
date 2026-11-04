@@ -165,9 +165,10 @@ test("render failures leave candidates correctable and cancellation awaits the o
 
 test("v5 migration preserves source/transcript/context and adds independent scoped analyses", async t => {
   const f = await fixture(t), before = f.store.transcripts.latest(f.artifact.id, f.context);
+  f.store.db.exec("DROP TABLE sequence_work; DROP TABLE sequences; DROP INDEX projects_lifecycle; ALTER TABLE projects DROP COLUMN revision; ALTER TABLE projects DROP COLUMN updated_at; ALTER TABLE projects DROP COLUMN deleted_at;");
   f.store.db.exec("DROP TABLE social_cooldowns; DROP TABLE social_refresh_leases; DROP TABLE social_posts; DROP TABLE social_connections; DROP TABLE social_grants; DROP TABLE social_configs; DROP TABLE schedule_occurrences; DROP TABLE schedules; DROP TABLE clip_analyses; PRAGMA user_version=5");
   const reopened = f.reopen();
-  assert.equal(reopened.db.prepare("PRAGMA user_version").get().user_version, 10);
+  assert.equal(reopened.db.prepare("PRAGMA user_version").get().user_version, 12);
   assert.deepEqual(reopened.transcripts.latest(f.artifact.id, f.context), before);
   assert.deepEqual(reopened.studio.artifact(f.artifact.id, f.context), f.artifact);
   assert.deepEqual(reopened.clips.list(f.artifact.id, f.context), []);

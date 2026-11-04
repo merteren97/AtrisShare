@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased — project sequences and connection diagnostics
+
+- Persistent project-level multi-source sequences with repeated ranges, an explicit
+  frame clock, atomic operation groups and durable 200-group undo/redo. Legacy
+  artifact edits/history remain intact and can be explicitly appended.
+- Visible timeline beside AI; ordered library selection, edge/numeric trim, split,
+  reorder, duplicate, gap/ripple delete, clip settings and revision-labelled preview.
+- Shared normalized FFmpeg preview/export, source-hash manifests, durable cancellation
+  and native OS-picker streaming saves without buffering full exports in the webview.
+- Sequence operation proposals through OpenCode and source-allowlisted MCP grants;
+  human acceptance, stale revision rejection and single-group undo. No publication authority.
+- Scoped project rename/information revisions, trash/restore, active-context recovery,
+  cancelled background work/schedules and capabilities fenced across trash/restore.
+- Explicit model connection tests, safe categorized diagnostics and persistent last
+  successful model preferences. OpenCode 1.19.5 remains the tested version; catalog
+  discovery is not inference/authentication evidence. See `docs/SEQUENCES.md`.
+
 ## Unreleased — local schedules, social adapters and preview hardening
 
 - SQLite v7–v9 local schedules/occurrences, timing/hash-bound fresh reviews, one-off/

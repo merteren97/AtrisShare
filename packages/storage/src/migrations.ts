@@ -1,7 +1,8 @@
 import type { DatabaseSync } from "node:sqlite";
 import { SOCIAL_MIGRATION_SQL } from "./social-store.js";
+import { SEQUENCE_MIGRATION_SQL } from "./sequence-store.js";
 
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 12;
 export function migrate(db: DatabaseSync): void {
   // SQLite's documented table-rebuild procedure. Foreign keys are checked before
   // commit and re-enabled on every exit; no dependent rows are dropped.
@@ -147,6 +148,15 @@ export function migrate(db: DatabaseSync): void {
       ALTER TABLE accounts_next RENAME TO accounts;
       PRAGMA user_version=10;
     `);
+    if (row.user_version < 11) db.exec(`
+      ALTER TABLE projects ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision>0);
+      ALTER TABLE projects ADD COLUMN updated_at TEXT NOT NULL DEFAULT '';
+      ALTER TABLE projects ADD COLUMN deleted_at TEXT;
+      UPDATE projects SET updated_at=created_at;
+      CREATE INDEX projects_lifecycle ON projects(account_id,deleted_at,created_at);
+      PRAGMA user_version=11;
+    `);
+    if (row.user_version < 12) { db.exec(SEQUENCE_MIGRATION_SQL); db.exec("PRAGMA user_version=12"); }
     if (db.prepare("PRAGMA foreign_key_check").all().length) throw new Error("Migration foreign key check failed");
     db.exec("COMMIT");
   } catch (error) { db.exec("ROLLBACK"); throw error; }

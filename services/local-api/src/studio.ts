@@ -13,6 +13,7 @@ import type { WorkspaceStore } from "../../../packages/storage/src/store.js";
 import type { CredentialVault } from "../../../packages/storage/src/vault.js";
 import type { YouTubeService } from "./youtube.js";
 import { YouTubePublishing, type UploadReply } from "./youtube-publishing.js";
+import { watchProjectLifecycle } from "./project-lifecycle.js";
 
 export interface StudioOptions { engine?: MediaEngineOptions; publisher?: YouTubePublishing }
 const code = (error: unknown) => error instanceof WorkspaceError ? error.code : error instanceof Error &&
@@ -47,12 +48,14 @@ export class StudioService {
     if (this.imports >= 2) throw new WorkspaceError(409, "media_busy");
     this.imports++;
     const id = randomUUID();
+    const abort = new AbortController(), lifecycle = watchProjectLifecycle(this.store,context,abort);
     const operation = (async () => {
       try {
-        const result = await this.engine.import(id, input, filename, AbortSignal.any([signal, this.shutdown.signal]));
+        const result = await this.engine.import(id, input, filename, AbortSignal.any([signal, this.shutdown.signal,abort.signal]));
+        lifecycle.assertActive();
         return this.store.studio.addArtifact({ ...result, ...scope, kind: "source", sourceId: null, channelVideoId: null, createdAt: new Date().toISOString() });
       } catch (error) { await this.engine.remove(id).catch(() => undefined); throw new WorkspaceError(400, code(error)); }
-      finally { this.imports--; }
+      finally { this.imports--; lifecycle.dispose(); }
     })();
     this.reads.add(operation); try { return await operation; } finally { this.reads.delete(operation); }
   }
@@ -217,7 +220,9 @@ export class StudioService {
     if (artifact.kind === "proxy") throw new WorkspaceError(409, "media_proxy_readonly");
     const render: StudioRender = { id: randomUUID(), sourceId: id, kind, state: "running", progress: 0, error: null, artifactId: null };
     this.store.studio.addRender(context, render, this.owner);
-    this.launch(`render:${render.id}`, async signal => {
+    const lifecycleAbort = new AbortController(), lifecycle = watchProjectLifecycle(this.store,context,lifecycleAbort);
+    this.launch(`render:${render.id}`, async parentSignal => {
+      const signal = AbortSignal.any([parentSignal,lifecycleAbort.signal]);
       const outputId = randomUUID();
       let registered = false;
       let heartbeatFailed = false;
@@ -235,9 +240,11 @@ export class StudioService {
         signal.throwIfAborted();
         if (!await this.engine.verify(id, artifact.sha256, signal)) throw new WorkspaceError(409, "media_source_changed");
         signal.throwIfAborted();
+        lifecycle.assertActive();
         this.store.studio.addArtifact({ ...result, filename: `${artifact.filename.replace(/\.[^.]+$/, "")}-${suffix ? `${suffix}-${render.id.slice(0, 6)}` : kind === "export" ? `edit-r${revision}` : kind}.mp4`, accountId: context.accountId, projectId: context.projectId!,
           kind, sourceId: id, sourceSha256: artifact.sha256, channelVideoId: artifact.channelVideoId, createdAt: new Date().toISOString() });
         registered = true;
+        lifecycle.assertActive();
         if (kind === "proxy") this.store.studio.attachProxy(id, context, outputId, artifact.sha256);
         render.state = "succeeded"; render.progress = 1; render.artifactId = outputId;
         try { if (kind === "export" && edit) this.store.createMemory({ context, kind: "edit-history", reviewState: "confirmed", text: `${artifact.filename} · timeline r${revision} · ${JSON.stringify(edit.segments ?? [{ inSeconds: edit.inSeconds, outSeconds: edit.outSeconds }])} · ${edit.crop} · ${edit.gainDb} dB` }); }
@@ -246,7 +253,7 @@ export class StudioService {
         if (!registered) await this.engine.remove(outputId).catch(() => undefined);
         render.state = heartbeatFailed ? "failed" : signal.aborted ? "cancelled" : "failed";
         render.error = heartbeatFailed ? "media_storage_unavailable" : signal.aborted ? null : code(error);
-      } finally { clearInterval(heartbeat); this.store.studio.saveRender(render, this.owner); }
+      } finally { clearInterval(heartbeat); lifecycle.dispose(); try { this.store.studio.saveRender(render, this.owner); } catch { /* Deleted project or revoked owner wins. */ } }
     }); return render;
   }
   cancelRender(id: string, context: WorkspaceContext) {

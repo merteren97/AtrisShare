@@ -1,9 +1,21 @@
 const en = {
+  connectionTitle: "Model connection", catalogNotAuth: "This is the general CLI model catalog, not a list of authenticated providers. A listed model is not proof of access.",
+  authUnverified: "Provider sign-in and model access not verified in this session", authRequired: "Provider sign-in required", authVerified: "Access verified by the latest successful inference test in this session",
+  testConnection: "Test selected model", testAgain: "Test selected model again", testRunning: "Testing selected model…", cancelTest: "Cancel test",
+  testDisclosure: "Test sends a tiny fixed request to the selected provider, which may be remote and may charge for usage. No project metadata, memory, transcript or media is included. It does not edit the timeline.",
+  testSucceeded: "Model answered with the expected response", testFailed: "Connection test failed", testCancelled: "Connection test cancelled", lastSuccess: "Last successful model request:",
+  safeDiagnostic: "Safe diagnostics", stage: "Stage", category: "Category", elapsed: "Duration", exitCode: "Exit code", requestId: "Request ID",
+  connectionSupport: "Supported connection setup", connectionSupportHelp: "OpenCode 1.19.5 only. Uses the official CLI authentication store in an isolated, tools-denied session. Sign in through the CLI and retry here. Environment-only keys, custom providers and authentication plugins are not imported. Sign-in presence is not inspected separately; only a real inference verifies access. No other CLI version has been verified for commands, JSONL, isolation or cancellation.",
+  modelMissing: "unavailable", selectionMissing: "Your selected model is missing from the current catalog. Choose a model explicitly; no fallback was selected.",
+  preferenceFailed: "The last successful preference could not be read or saved. Retry after checking local workspace access.", preferenceSession: "Model preference is held in this runtime session only; durable preference storage is not configured.",
+  errorAuth: "Sign in to this provider through the OpenCode CLI, then retry the selected model here.", errorAccess: "The provider denied access to this model. Check model permissions or explicitly choose another model.",
+  errorQuota: "The provider reported a quota or rate limit. Check usage or wait, then retry explicitly.", errorNetwork: "The provider request failed on the network, TLS or proxy connection. Check connectivity, then retry.",
+  errorCancelled: "The request was cancelled. You can start a new test.", errorTestUnsupported: "Connection testing is not available for this CLI profile. Refresh setup and retry.",
   title: "Editing assistant", intro: "Describe the edit. Review the proposal before changing your timeline.",
-  setup: "OpenCode CLI", checking: "Checking local setup…", available: "Available", unavailable: "Unavailable",
+  setup: "OpenCode CLI", checking: "Checking local setup…", available: "CLI checks passed", unavailable: "Unavailable",
   refresh: "Refresh models & history", cliHelp: "Install and sign in through the OpenCode CLI, then refresh. Authentication is managed by the CLI.",
   catalogCurrent: "Model catalog up to date", catalogStale: "Model catalog could not be updated", catalogUpdated: "Last updated",
-  noModels: "No models discovered. Configure a provider in OpenCode, then refresh.", model: "Model", chooseModel: "Choose an exact model", request: "Your editing request",
+  noModels: "No selectable models in the general catalog. Refresh the catalog, then choose a model explicitly.", model: "Model", chooseModel: "Choose an exact model", request: "Your editing request",
   memory: "Include confirmed account/project memory", memoryHelp: "Optional. Only confirmed account-wide and project memory for this target is included.",
   disclosure: "Generate sends your request, source metadata and current timeline to the selected provider, which may be remote. If you select Include local transcript, its timestamped segments and text are also sent. No media bytes, frames or audio are sent. The CLI uses an isolated temporary session; AtrisShare saves proposal history locally.",
   includeTranscript: "Include local transcript", includeTranscriptHelp: "Off by default. Available only for completed text bound to this source’s SHA-256. This choice also controls transcript-read permission for a new MCP connection.",
@@ -48,7 +60,7 @@ const en = {
   errorCatalog: "The model catalog could not be downloaded or verified. Check your connection and refresh models again. Your last saved list is retained.",
   errorModel: "This model is no longer available. Refresh discovery and choose a model again.",
   errorTimeout: "The request timed out. You can edit the request and retry explicitly.",
-  errorOutput: "The model did not return a valid edit proposal. Edit the request or choose another model and retry.",
+  errorOutput: "The model response did not match the expected format. Retry explicitly or choose another model.",
   errorScope: "This operation no longer matches the current account, project or source. Reload the workspace.",
   errorGrant: "The connection grant is expired, revoked or invalid. Create a new scoped connection.",
   errorBusy: "Another operation is in progress for this source. Refresh its status before trying again.",
@@ -58,11 +70,23 @@ const en = {
 
 type AssistantKey = keyof typeof en;
 const tr: Record<AssistantKey, string> = {
+  connectionTitle: "Model bağlantısı", catalogNotAuth: "Bu, genel CLI model kataloğudur; giriş yapılmış sağlayıcı listesi değildir. Modelin listelenmesi erişim kanıtı sayılmaz.",
+  authUnverified: "Bu oturumda sağlayıcı girişi ve model erişimi doğrulanmadı", authRequired: "Sağlayıcı girişi gerekli", authVerified: "Erişim bu oturumdaki son başarılı gerçek model denemesiyle doğrulandı",
+  testConnection: "Seçili modeli test et", testAgain: "Seçili modeli yeniden test et", testRunning: "Seçili model deneniyor…", cancelTest: "Denemeyi iptal et",
+  testDisclosure: "Test, uzakta çalışabilen seçili sağlayıcıya küçük ve sabit bir istek gönderir; kullanım ücreti oluşturabilir. Proje üst verileri, bellek, döküm veya medya eklenmez. Zaman çizelgesi değişmez.",
+  testSucceeded: "Model beklenen yanıtı verdi", testFailed: "Bağlantı denemesi başarısız", testCancelled: "Bağlantı denemesi iptal edildi", lastSuccess: "Son başarılı model isteği:",
+  safeDiagnostic: "Güvenli tanılama", stage: "Aşama", category: "Hata sınıfı", elapsed: "Süre", exitCode: "Çıkış kodu", requestId: "İstek kimliği",
+  connectionSupport: "Desteklenen bağlantı kurulumu", connectionSupportHelp: "Yalnızca OpenCode 1.19.5. Resmî CLI kimlik deposu, araçların kapalı olduğu izole oturumda kullanılır. CLI üzerinden giriş yapıp burada yeniden deneyin. Yalnız ortam anahtarları, özel sağlayıcılar ve giriş eklentileri aktarılmaz. Giriş kaydı ayrıca incelenmez; erişimi yalnızca gerçek model isteği doğrular. Diğer CLI sürümlerinin komut, JSONL, izolasyon veya iptal uyumluluğu doğrulanmadı.",
+  modelMissing: "kullanılamıyor", selectionMissing: "Seçtiğiniz model güncel katalogda yok. Açıkça model seçin; otomatik alternatif seçilmedi.",
+  preferenceFailed: "Son başarılı tercih okunamadı veya kaydedilemedi. Yerel çalışma alanı erişimini denetleyip yeniden deneyin.", preferenceSession: "Model tercihi yalnızca bu çalışma oturumunda tutuluyor; kalıcı tercih deposu yapılandırılmadı.",
+  errorAuth: "OpenCode CLI üzerinden bu sağlayıcıya giriş yapın, ardından seçili modeli burada yeniden deneyin.", errorAccess: "Sağlayıcı bu modele erişimi reddetti. Model izinlerini denetleyin veya açıkça başka model seçin.",
+  errorQuota: "Sağlayıcı kota veya istek sınırı bildirdi. Kullanımı denetleyin ya da bekleyip açıkça yeniden deneyin.", errorNetwork: "Sağlayıcı isteğinde ağ, TLS veya proxy bağlantısı başarısız oldu. Bağlantıyı denetleyip yeniden deneyin.",
+  errorCancelled: "İstek iptal edildi. Yeni bir deneme başlatabilirsiniz.", errorTestUnsupported: "Bu CLI profilinde bağlantı denemesi kullanılamıyor. Kurulumu yenileyip yeniden deneyin.",
   title: "Kurgu asistanı", intro: "İstediğiniz kurguyu anlatın. Zaman çizelgesini değiştirmeden önce öneriyi inceleyin.",
-  setup: "OpenCode CLI", checking: "Yerel kurulum denetleniyor…", available: "Kullanılabilir", unavailable: "Kullanılamıyor",
+  setup: "OpenCode CLI", checking: "Yerel kurulum denetleniyor…", available: "CLI denetimleri geçti", unavailable: "Kullanılamıyor",
   refresh: "Modelleri ve geçmişi yenile", cliHelp: "OpenCode CLI’ı kurup CLI üzerinden oturum açın, ardından yenileyin. Kimlik doğrulamayı CLI yönetir.",
   catalogCurrent: "Model kataloğu güncel", catalogStale: "Model kataloğu güncellenemedi", catalogUpdated: "Son güncelleme",
-  noModels: "Model bulunamadı. OpenCode’da bir sağlayıcı yapılandırıp yenileyin.", model: "Model", chooseModel: "Tam model adını seçin", request: "Kurgu isteğiniz",
+  noModels: "Genel katalogda seçilebilir model yok. Kataloğu yenileyip açıkça model seçin.", model: "Model", chooseModel: "Tam model adını seçin", request: "Kurgu isteğiniz",
   memory: "Onaylı hesap/proje belleğini ekle", memoryHelp: "İsteğe bağlıdır. Yalnızca bu hedefin hesap geneli ve proje kapsamındaki onaylı belleği eklenir.",
   disclosure: "Öneri oluştur, isteğinizi, kaynak üst verilerini ve güncel zaman çizelgesini uzakta çalışabilen seçili sağlayıcıya gönderir. Yerel dökümü ekle seçilirse zaman damgalı bölümler ve metin de gönderilir. Medya baytları, kare veya ses gönderilmez. CLI izole geçici oturum kullanır; AtrisShare öneri geçmişini yerelde kaydeder.",
   includeTranscript: "Yerel dökümü ekle", includeTranscriptHelp: "Varsayılan olarak kapalıdır. Yalnızca bu kaynağın SHA-256 değeriyle eşleşen tamamlanmış metinde kullanılabilir. Bu seçim, yeni MCP bağlantısının döküm okuma iznini de belirler.",
@@ -107,7 +131,7 @@ const tr: Record<AssistantKey, string> = {
   errorCatalog: "Model kataloğu indirilemedi veya doğrulanamadı. Bağlantınızı denetleyip modelleri yeniden yenileyin. Son kaydedilen liste korunur.",
   errorModel: "Bu model artık kullanılamıyor. Model listesini yenileyip tekrar seçim yapın.",
   errorTimeout: "İstek zaman aşımına uğradı. İsteği düzenleyip yeniden başlatabilirsiniz.",
-  errorOutput: "Model geçerli bir kurgu önerisi döndürmedi. İsteği düzenleyin veya başka bir model seçip yeniden deneyin.",
+  errorOutput: "Model yanıtı beklenen biçimle eşleşmedi. Açıkça yeniden deneyin veya başka bir model seçin.",
   errorScope: "Bu işlem artık güncel hesap, proje veya kaynakla eşleşmiyor. Çalışma alanını yeniden yükleyin.",
   errorGrant: "Bağlantı anahtarının süresi dolmuş, iptal edilmiş veya geçersiz. Yeni bir kapsamlı bağlantı oluşturun.",
   errorBusy: "Bu kaynakta başka bir işlem sürüyor. Yeniden denemeden önce durumu yenileyin.",
@@ -120,6 +144,12 @@ export function assistantText(language: "tr" | "en"): AssistantTranslate { retur
 export function assistantError(error: unknown, t: AssistantTranslate): string {
   const code = typeof error === "string" ? error : error && typeof error === "object" && "code" in error ? String(error.code) : "";
   if (/transcript|transcription/u.test(code)) return transcriptionError(error, t);
+  if (code === "ai_auth_required") return t("errorAuth");
+  if (code === "ai_access_denied") return t("errorAccess");
+  if (code === "ai_quota_exceeded") return t("errorQuota");
+  if (code === "ai_network_error") return t("errorNetwork");
+  if (code === "ai_cancelled") return t("errorCancelled");
+  if (code === "ai_connection_unsupported") return t("errorTestUnsupported");
   if (/revision|conflict|stale|source_changed|hash_mismatch/u.test(code)) return t("stale");
   if (/connection_failed|invalid_runtime|network/u.test(code) || error instanceof TypeError) return t("errorConnection");
   if (/ai_version_unsupported/u.test(code)) return t("errorVersion");

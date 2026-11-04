@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -8,6 +8,8 @@ import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
 import { Worker } from "node:worker_threads";
 import { WorkspaceStore } from "../dist/packages/storage/src/store.js";
+import { SCHEMA_VERSION } from "../dist/packages/storage/src/migrations.js";
+import { projectLifecycleGuard, watchProjectLifecycle } from "../dist/services/local-api/src/project-lifecycle.js";
 import { resolveDataDirectory, redactSensitiveText } from "../dist/packages/storage/src/config.js";
 import { createCredentialVault } from "../dist/packages/storage/src/vault.js";
 
@@ -126,7 +128,10 @@ test("Phase 1 schema upgrade preserves every dependent row and keeps foreign key
     assert.throws(() => store.setContext({ accountId: other.id, projectId }), /context_not_found/);
     const inspection = new DatabaseSync(path);
     try {
-      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, 10);
+      assert.equal(inspection.prepare("PRAGMA user_version").get().user_version, SCHEMA_VERSION);
+      assert.equal(store.listProjects(accountId)[0].revision, 1);
+      assert.equal(store.listProjects(accountId)[0].updatedAt, stamp);
+      assert.equal(store.listProjects(accountId)[0].deletedAt, null);
       assert.deepEqual(inspection.prepare("PRAGMA foreign_key_check").all(), []);
       assert.ok(inspection.prepare("PRAGMA foreign_key_list(memory)").all().every(row => row.table !== "accounts_next"));
     } finally { inspection.close(); }
@@ -271,6 +276,117 @@ test("diagnostics/notes redact recognizable secrets and data overrides must be a
   assert.ok(!JSON.stringify(store.listAudit(scope)).includes("private"));
   assert.equal(redactSensitiveText("A calm tone"), "A calm tone");
   assert.throws(() => resolveDataDirectory("./data"), /absolute/);
+});
+
+test("project revisions, scope, trash and restore are durable across two windows", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "atris-project-lifecycle-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "workspace.sqlite"), first = new WorkspaceStore(path), second = new WorkspaceStore(path);
+  try {
+    const account = createAccount(first), other = createAccount(first, "Other");
+    const project = first.createProject({ accountId: account.id, name: "Original", description: "Keep me" });
+    const scope = { accountId: account.id, projectId: project.id }, input = { context: scope, expectedRevision: 1 };
+    const sibling = first.createProject({ accountId: account.id, name: "Sibling", description: "" });
+    first.setContext(scope); const memory = first.createMemory(note(scope));
+    const initialGuard = projectLifecycleGuard(second, scope);
+    const update = first.updateProject(project.id, { ...input, name: "Renamed", description: "New description" });
+    assert.equal(update.revision, 2); initialGuard(); // Rename does not revoke grants.
+    assert.equal(second.listProjects(account.id).find(p => p.id === project.id).name, "Renamed");
+    assert.throws(() => second.updateProject(project.id, { ...input, name: "Stale", description: "" }), /revision_conflict/);
+    assert.throws(() => second.trashProject(project.id, input), /revision_conflict/);
+    assert.throws(() => first.updateProject(project.id, { ...input, expectedRevision: 2, context: { accountId: other.id, projectId: project.id }, name: "Wrong", description: "" }), /project_not_found/);
+    assert.throws(() => first.trashProject(project.id, { ...input, expectedRevision: 2, context: { accountId: account.id, projectId: sibling.id } }), /context_not_found/);
+    assert.throws(() => first.updateProject(project.id, { ...input, expectedRevision: 2, name: " ", description: "" }));
+    assert.throws(() => first.updateProject(project.id, { ...input, expectedRevision: 2, name: "x", description: "x".repeat(501) }));
+    const trashed = first.trashProject(project.id, { ...input, expectedRevision: 2 });
+    assert.equal(trashed.revision, 3); assert.ok(trashed.deletedAt);
+    assert.deepEqual(second.getContext(), { accountId: account.id, projectId: null });
+    assert.deepEqual(second.listProjects(account.id).map(p => p.id), [sibling.id]);
+    assert.deepEqual(second.listProjects(account.id, "trashed"), [trashed]);
+    for (const read of [() => second.resolveContext(scope), () => second.listMemory(scope), () => second.studio.artifacts(scope), () => second.schedules.snapshot(scope), () => second.setContext(scope), initialGuard]) assert.throws(read, /context_not_found/);
+    assert.throws(() => second.restoreProject(project.id, { ...input, expectedRevision: 2 }), /revision_conflict/);
+    assert.throws(() => second.restoreProject(project.id, { ...input, expectedRevision: 3, context: { accountId: other.id, projectId: project.id } }), /project_not_found/);
+    const restored = second.restoreProject(project.id, { ...input, expectedRevision: 3 });
+    assert.equal(restored.revision, 4); assert.equal(restored.deletedAt, null);
+    assert.equal(restored.description, "New description");
+    assert.deepEqual(first.listMemory(scope), [memory]);
+    assert.deepEqual(first.getContext(), { accountId: account.id, projectId: null });
+    assert.throws(initialGuard, /context_not_found/, "pre-trash grants stay invalid after restore");
+    projectLifecycleGuard(first, scope)();
+    assert.ok(first.listAudit(scope).some(e => e.action === "project.trashed"));
+  } finally { first.close(); second.close(); }
+  const reopened = new WorkspaceStore(path);
+  try { assert.equal(reopened.listProjects(reopened.getContext().accountId).find(p => p.name === "Renamed").revision, 4); }
+  finally { reopened.close(); }
+});
+
+test("trash atomically fences workers, cancels future schedules and keeps files and accepted receipts", async t => {
+  const directory = await mkdtemp(join(tmpdir(), "atris-project-work-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, "workspace.sqlite"), store = new WorkspaceStore(path);
+  const db = new DatabaseSync(path);
+  try {
+    const account = createAccount(store), p = store.createProject({ accountId: account.id, name: "Work", description: "" });
+    const scope = { accountId: account.id, projectId: p.id }, sourceId = randomUUID(), stamp = new Date().toISOString();
+    await writeFile(join(directory, "source.mp4"), "preserved source bytes");
+    store.studio.addArtifact({ id: sourceId, ...scope, filename: "source.mp4", sha256: "a".repeat(64), bytes: 22, mimeType: "video/mp4", probe: null, sourceId: null, channelVideoId: null, createdAt: stamp });
+    const ids = {};
+    for (const table of ["ai_runs", "transcripts", "clip_analyses"]) {
+      const id = ids[table] = randomUUID();
+      db.prepare(`INSERT INTO ${table}(id,account_id,project_id,artifact_id,data,owner,lease_until) VALUES(?,?,?,?,?,?,?)`)
+        .run(id, account.id, p.id, sourceId, JSON.stringify({ id, state: "running", summary: null, edit: null }), "old-worker", Date.now() + 300000);
+    }
+    const render = { id: randomUUID(), sourceId, kind: "export", state: "running", progress: 0, error: null, artifactId: null };
+    store.studio.addRender(scope, render, "old-worker");
+    const draft = store.studio.create({ context: scope, artifactId: sourceId, title: "Future review", description: "", visibility: "private", madeForKids: false, notifySubscribers: false }, account.destinationId);
+    const start = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10) + "T09:00";
+    const schedule = store.schedules.create({ context: scope, name: "Future", kind: "youtube", draftId: draft.id,
+      rule: { frequency: "daily", localStart: start, timeZone: "UTC", weekdays: [], missedPolicy: "ask" } });
+    const acceptedId = randomUUID(), receipt = { ...draft, id: acceptedId, state: "processing", videoId: "remote-receipt" };
+    db.prepare("INSERT INTO publications(id,account_id,project_id,artifact_id,data) VALUES(?,?,?,?,?)").run(acceptedId, account.id, p.id, sourceId, JSON.stringify(receipt));
+    // A dependent-row error must roll back job cancellation and project/context edits together.
+    db.exec("CREATE TRIGGER reject_trash BEFORE UPDATE OF deleted_at ON projects BEGIN SELECT RAISE(ABORT,'injected failure'); END");
+    assert.throws(() => store.trashProject(p.id, { context: scope, expectedRevision: 1 }), /injected failure/);
+    assert.equal(store.studio.render(render.id, scope).state, "running");
+    db.exec("DROP TRIGGER reject_trash");
+    const deleted = store.trashProject(p.id, { context: scope, expectedRevision: 1 });
+    store.schedules.tick();
+    assert.deepEqual(store.schedules.notificationPage().occurrences, []);
+    store.restoreProject(p.id, { context: scope, expectedRevision: deleted.revision });
+    assert.equal(store.studio.render(render.id, scope).state, "cancelled");
+    assert.throws(() => store.studio.saveRender({ ...render, state: "succeeded" }, "old-worker"), /render_busy/);
+    assert.throws(() => store.studio.assertAiActive(ids.ai_runs, "old-worker"), /ai_run_conflict/);
+    assert.throws(() => store.transcripts.assertActive(ids.transcripts, "old-worker"));
+    for (const table of ["ai_runs", "transcripts", "clip_analyses"]) {
+      const row = db.prepare(`SELECT * FROM ${table} WHERE id=?`).get(ids[table]);
+      assert.equal(JSON.parse(row.data).state, "cancelled"); assert.equal(row.cancel_requested, 1); assert.equal(row.lease_until, 0);
+    }
+    const queue = store.schedules.snapshot(scope);
+    assert.equal(queue.schedules.find(s => s.id === schedule.id).state, "cancelled");
+    assert.equal(queue.schedules[0].nextDueAt, null); assert.ok(queue.occurrences.every(o => o.state === "cancelled"));
+    assert.equal(store.studio.publication(acceptedId, scope).videoId, "remote-receipt");
+    assert.equal(store.studio.publication(acceptedId, scope).state, "processing");
+    assert.equal(db.prepare("SELECT dispatch_revoked FROM publications WHERE id=?").get(acceptedId).dispatch_revoked, 1);
+    assert.equal(await readFile(join(directory, "source.mp4"), "utf8"), "preserved source bytes");
+    assert.equal(store.studio.artifacts(scope)[0].id, sourceId);
+  } finally { db.close(); store.close(); }
+});
+
+test("quiet async work observes a trash/restore cycle and disposes its lifecycle watcher", async t => {
+  const { store, p, scope } = fixture(t), abort = new AbortController(), disposed = new AbortController();
+  const watching = watchProjectLifecycle(store, scope, abort), stopped = watchProjectLifecycle(store, scope, disposed);
+  t.after(() => { watching.dispose(); stopped.dispose(); });
+  stopped.dispose();
+  const invalidGrant = projectLifecycleGuard(store, scope, "mcp_grant_invalid", 401);
+  const deleted = store.trashProject(p.id, { context: scope, expectedRevision: 1 });
+  store.restoreProject(p.id, { context: scope, expectedRevision: deleted.revision });
+  assert.throws(invalidGrant, error => error.status === 401 && error.code === "mcp_grant_invalid");
+  assert.throws(watching.assertActive, /context_not_found/);
+  let deadline;
+  try {
+    await Promise.race([once(abort.signal, "abort"), new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("quiet task not aborted")), 3000); })]);
+  } finally { clearTimeout(deadline); }
+  assert.equal(disposed.signal.aborted, false);
 });
 
 test("OS vault fails closed or performs encrypted Windows DPAPI round trip", async t => {

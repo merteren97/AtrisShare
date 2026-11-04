@@ -6,6 +6,7 @@ import { WorkspaceError } from "../../../packages/storage/src/config.js";
 import type { WorkspaceStore } from "../../../packages/storage/src/store.js";
 import type { TranscriptStore } from "../../../packages/storage/src/transcript-store.js";
 import type { StudioService } from "./studio.js";
+import { projectLifecycleGuard } from "./project-lifecycle.js";
 
 export interface TranscriptionOptions { engine?: Pick<TranscriptionEngine, "status" | "transcribe"> }
 export type TranscriptionStatus = Awaited<ReturnType<TranscriptionEngine["status"]>>;
@@ -52,8 +53,9 @@ export class TranscriptionService {
   }
   async start(artifactId: string, context: WorkspaceContext, authorize?: () => void): Promise<Transcript> {
     this.ready(); this.source(artifactId, context);
+    const assertActive = projectLifecycleGuard(this.store,context);
     authorize?.();
-    const status = await this.setup(); this.ready();
+    const status = await this.setup(); this.ready(); assertActive();
     authorize?.();
     if (!status.available) throw new WorkspaceError(409, "transcription_unavailable");
     const { scope, artifact } = this.source(artifactId, context);
