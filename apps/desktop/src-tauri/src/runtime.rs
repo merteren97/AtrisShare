@@ -536,6 +536,10 @@ mod tests {
                 const leaf = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'],
                     { stdio: 'ignore', detached: true });
                 console.log('ATRIS_SHARE_TEST_TREE ' + JSON.stringify([process.ppid, process.pid, leaf.pid]));
+                if (process.env.ATRIS_SHARE_TEST_DIAGNOSTICS === '1') {
+                    // A real runtime may emit diagnostics after its readiness handshake.
+                    setImmediate(() => process.stdout.write('runtime diagnostic '.repeat(65536) + '\n'));
+                }
                 setInterval(() => {}, 1000);
             "#;
             command
@@ -559,11 +563,16 @@ mod tests {
         fn read_tree(output: impl Read + Send + 'static) -> ([u32; 3], Vec<OwnedHandle>) {
             let (sender, receiver) = mpsc::channel();
             thread::spawn(move || {
+                let mut readiness = Some(sender);
                 for line in BufReader::new(output).lines().map_while(Result::ok) {
                     if let Some(payload) = line.strip_prefix(TREE_PREFIX) {
-                        let _ = sender.send(serde_json::from_str::<[u32; 3]>(payload));
-                        return;
+                        if let Some(sender) = readiness.take() {
+                            let _ = sender.send(serde_json::from_str::<[u32; 3]>(payload));
+                        }
                     }
+                    // Continue draining until EOF. Node pipe writes are asynchronous on
+                    // Windows: dropping the reader after readiness can cause EPIPE and
+                    // terminate a descendant before we test the job's kill-on-close.
                 }
             });
             let pids = receiver
@@ -605,16 +614,37 @@ mod tests {
         }
 
         #[test]
+        fn tree_diagnostics_do_not_terminate_descendants_after_readiness() {
+            let mut command = tree_command();
+            command.env("ATRIS_SHARE_TEST_DIAGNOSTICS", "1");
+            let mut owner = RuntimeOwner::spawn(&mut command).unwrap();
+            let (pids, processes) = read_tree(owner.child.stdout.take().unwrap());
+            // Closing the reader after the first line can raise EPIPE in the writer.
+            // Keep the owner/job open while the descendant flushes a pipe-sized burst.
+            assert_eq!(
+                unsafe { WaitForSingleObject(processes[1].as_raw_handle(), 1000) },
+                WAIT_TIMEOUT,
+                "diagnostic writer {} exited while the native owner/job was still alive",
+                pids[1]
+            );
+            drop(owner);
+            for process in &processes {
+                assert_exited(process, None);
+            }
+        }
+
+        #[test]
         fn job_closes_descendants_even_after_node_exits() {
             let mut owner = RuntimeOwner::spawn(&mut tree_command()).unwrap();
             let (pids, processes) = read_tree(owner.child.stdout.take().unwrap());
             assert_eq!(pids[0], owner.child.id());
             owner.child.kill().unwrap();
             owner.child.wait().unwrap();
-            for process in &processes[1..] {
+            for (pid, process) in pids[1..].iter().zip(&processes[1..]) {
                 assert_eq!(
                     unsafe { WaitForSingleObject(process.as_raw_handle(), 0) },
-                    WAIT_TIMEOUT
+                    WAIT_TIMEOUT,
+                    "descendant {pid} exited before the job was closed"
                 );
             }
             drop(owner);
